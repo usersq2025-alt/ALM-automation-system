@@ -318,13 +318,11 @@ def build_excel(df, days, periods, statuses):
                 else:
                     ws.write(excel_row, col_idx, val, unlocked_fmt)
 
-    # ── Extra blank rows (50) ─────────────────────────────────────────────────
+    # ── Extra blank rows (50) — كلها مفتوحة بالكامل للمعلمة ────────────────────
     for extra in range(extra_rows):
         excel_row = num_rows + 1 + extra
         for col_idx in range(13):
-            if col_idx < 8:
-                ws.write(excel_row, col_idx, "", locked_text_fmt)
-            elif col_idx == 11:
+            if col_idx == 11:  # L = الفترة → Arial
                 ws.write(excel_row, col_idx, "", unlocked_arial_fmt)
             else:
                 ws.write(excel_row, col_idx, "", unlocked_fmt)
