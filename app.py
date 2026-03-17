@@ -246,8 +246,14 @@ def read_xlsx_raw(file_bytes):
         return pd.DataFrame(matrix[1:], columns=headers)
 
 
+def get_first_name(full_name):
+    """ابتسام خالد سمونة → ابتسام"""
+    parts = str(full_name).strip().split()
+    return parts[0] if parts else str(full_name)
+
+
 def get_teacher_name(full_name):
-    """مثال: ابتسام خالد سمونة → ابتسام سمونة"""
+    """ابتسام خالد سمونة → ابتسام سمونة"""
     name_str = str(full_name).strip()
     parts = name_str.split()
     if len(parts) > 1:
@@ -434,9 +440,10 @@ def process_files(uploaded_files, days, periods, statuses):
             teacher_col = next((c for c in df.columns if "المعلمة" in str(c)), None)
             if teacher_col and not df[teacher_col].dropna().empty:
                 raw_name = str(df[teacher_col].dropna().iloc[0]).strip()
-                teacher_display = get_teacher_name(raw_name)
-                df[teacher_col] = teacher_display
-                short = teacher_display
+                first_name_only = get_first_name(raw_name)
+                file_name_display = get_teacher_name(raw_name)
+                df[teacher_col] = first_name_only   # العمود H: الاسم الأول فقط
+                short = file_name_display            # اسم الملف: الاسم الأول + الكنية
             else:
                 short = uf.name.rsplit(".", 1)[0]
 
@@ -472,7 +479,7 @@ with st.sidebar:
 
     days_text = st.text_area(
         "📅 أيام الأسبوع",
-        value="الاثنين 3/23\nالثلاثاء 3/24\nالأربعاء 3/25\nالخميس 3/26\nالجمعة 3/27\nالسبت 3/28\nالأحد 3/29",
+        value="الإثنين\nالثلاثاء\nالأربعاء\nالخميس\nالجمعة\nالسبت\nالأحد",
         height=160,
         help="كل يوم في سطر منفصل",
     )
