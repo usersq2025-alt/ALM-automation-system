@@ -561,11 +561,10 @@ def process_files_from_cache(file_bytes_cache, days, periods, statuses, teacher_
             continue
         try:
             if raw_name:
-                col_h_name        = teacher_map.get(raw_name, get_first_name(raw_name))
-                file_name_display = get_teacher_name(raw_name)
+                col_h_name = teacher_map.get(raw_name, get_first_name(raw_name))
                 if teacher_col:
                     df[teacher_col] = col_h_name
-                short = file_name_display
+                short = col_h_name  # اسم الملف = نفس اسم العمود H
             else:
                 short = fname.rsplit(".", 1)[0]
 
@@ -625,11 +624,10 @@ def process_files(uploaded_files, days, periods, statuses, teacher_map=None):
             continue
         try:
             if raw_name:
-                col_h_name        = (teacher_map or {}).get(raw_name, get_first_name(raw_name))
-                file_name_display = get_teacher_name(raw_name)
+                col_h_name = (teacher_map or {}).get(raw_name, get_first_name(raw_name))
                 if teacher_col:
                     df[teacher_col] = col_h_name
-                short = file_name_display
+                short = col_h_name  # اسم الملف = نفس اسم العمود H
             else:
                 short = fname.rsplit(".", 1)[0]
 
