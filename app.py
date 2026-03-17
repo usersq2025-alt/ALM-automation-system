@@ -736,20 +736,51 @@ def analyze_day_distribution(students_df, days_list, day_col, status_col):
     }
 
 
+def excel_serial_to_time_str(val):
+    """تحويل Excel time serial (0.375) أو نص وقت (9:00 / 9.30) إلى HH:MM"""
+    if val is None or str(val).strip() in ("", "nan"):
+        return ""
+    s = str(val).strip()
+    # إذا كانت قيمة عشرية (Excel serial)
+    try:
+        f = float(s)
+        if 0 < f < 1:
+            total_min = round(f * 24 * 60)
+            h = total_min // 60
+            m = total_min % 60
+            return f"{h}:{m:02d}"
+    except ValueError:
+        pass
+    # نص وقت عادي
+    return format_time(s)
+
+
+def check_time_period_match(time_str, period_str):
+    """
+    يتحقق إذا كان الوقت يتطابق مع الفترة.
+    يُعيد (صحيح/خطأ, اسم الفترة الصحيحة)
+    """
+    if not time_str or not period_str:
+        return True, None
+    mins = parse_time_to_minutes(time_str)
+    correct = get_period_from_time(mins, PERIOD_SCHEDULE)
+    if correct is None:
+        return True, None  # وقت خارج الجدول — لا نحكم
+    return correct == period_str.strip(), correct
+
+
 def process_stage2_file(file_bytes, days_list):
     """معالجة ملف واحد مُعاد من المعلمة"""
     import xlsxwriter
 
-    # قراءة البيانات
     df = read_xlsx_raw(file_bytes)
 
-    # تعريف الأعمدة
     col_map = {
-        "status":  next((c for c in df.columns if "الحالة"         in str(c)), None),
-        "day":     next((c for c in df.columns if "يوم الاختبار"   in str(c)), None),
-        "time":    next((c for c in df.columns if "توقيت الاختبار" in str(c)), None),
-        "period":  next((c for c in df.columns if "الفترة"         in str(c)), None),
-        "notes":   next((c for c in df.columns if "الملاحظات"      in str(c)), None),
+        "status": next((c for c in df.columns if "الحالة"         in str(c)), None),
+        "day":    next((c for c in df.columns if "يوم الاختبار"   in str(c)), None),
+        "time":   next((c for c in df.columns if "توقيت الاختبار" in str(c)), None),
+        "period": next((c for c in df.columns if "الفترة"         in str(c)), None),
+        "notes":  next((c for c in df.columns if "الملاحظات"      in str(c)), None),
     }
 
     columns_order = [
@@ -761,53 +792,75 @@ def process_stage2_file(file_bytes, days_list):
         if col not in df.columns:
             df[col] = ""
 
-    # 1. تحليل توزيع الأيام (بدون تعديل — تقرير فقط)
+    # ── تحليل توزيع الأيام (تقرير فقط) ──────────────────────────────────────
     day_report = {}
     if col_map["status"] and col_map["day"] and days_list:
         day_report = analyze_day_distribution(df, days_list, col_map["day"], col_map["status"])
 
-    # 2. تنسيق الوقت + تصحيح الفترة
-    time_period_issues = []
-    if col_map["time"] and col_map["period"]:
-        for idx, row in df.iterrows():
-            status_val = str(row.get(col_map["status"], "")).strip()
-            time_val   = str(row.get(col_map["time"],   "")).strip()
-            period_val = str(row.get(col_map["period"], "")).strip()
+    # ── فحص كل صف ────────────────────────────────────────────────────────────
+    red_rows          = []   # شرطي
+    orange_rows       = []   # ملاحظات جوهرية
+    yellow_rows       = []   # تعارض وقت/فترة
+    empty_status_rows = []   # حالة فارغة
+    wrong_data_rows   = []   # بيانات خاطئة (أنهت بلا يوم / لم تنه بها بيانات)
 
-            # تنظيف عمود الوقت دائماً
-            if time_val and time_val != "nan":
-                df.at[idx, col_map["time"]] = format_time(time_val)
-                mins = parse_time_to_minutes(time_val)
-                correct_period = get_period_from_time(mins, PERIOD_SCHEDULE)
+    STATUS_FINISHED = "أنهت المقرر"
 
-                # تصحيح الفترة إذا كانت خاطئة أو فارغة
-                if correct_period and period_val not in (correct_period, ""):
-                    df.at[idx, col_map["period"]] = correct_period
-                    time_period_issues.append(idx)
-                elif correct_period and not period_val:
-                    df.at[idx, col_map["period"]] = correct_period
+    for idx, row in df.iterrows():
+        status = str(row.get(col_map["status"] or "الحالة", "")).strip()
+        day    = str(row.get(col_map["day"]    or "يوم الاختبار",   "")).strip()
+        note   = str(row.get(col_map["notes"]  or "الملاحظات",  "")).strip()
+        time_raw = row.get(col_map["time"]   or "توقيت الاختبار", "")
+        period   = str(row.get(col_map["period"] or "الفترة", "")).strip()
 
-    # 3. كشف الصفوف — شرطي / ملاحظات جوهرية
-    red_rows    = []
-    orange_rows = []
-    if col_map["notes"]:
-        for idx, row in df.iterrows():
-            note = str(row.get(col_map["notes"], "")).strip()
-            if KEYWORD_RED in note:
-                red_rows.append(idx)
-            elif any(kw in note for kw in NOTES_KEYWORDS):
-                orange_rows.append(idx)
+        # تحويل الوقت من serial إلى HH:MM وتخزينه
+        time_str = excel_serial_to_time_str(time_raw)
+        if col_map["time"] and time_str:
+            df.at[idx, col_map["time"]] = time_str
 
-    # ── بناء Excel ──────────────────────────────────────────────────────────
-    output = io.BytesIO()
-    df = df[columns_order].copy()
-    num_rows = len(df)
+        # 1. حالة فارغة
+        if not status or status == "nan":
+            empty_status_rows.append(idx)
+            continue
 
+        # 2. أنهت المقرر → يجب أن يكون لها يوم
+        if status == STATUS_FINISHED:
+            if not day or day == "nan":
+                wrong_data_rows.append(idx)
+
+            # تحقق من تطابق الوقت مع الفترة
+            if time_str and period:
+                match, correct_p = check_time_period_match(time_str, period)
+                if not match:
+                    yellow_rows.append((idx, correct_p))
+
+        # 3. غير أنهت → يجب أن تكون خلايا اليوم/الوقت/الفترة فارغة
+        else:
+            has_extra = (
+                (day    and day    != "nan") or
+                (time_str and time_str != "") or
+                (period and period != "nan")
+            )
+            if has_extra:
+                # ميّز الصف فقط بدون مسح
+                wrong_data_rows.append(idx)
+
+        # 4. كلمة شرطي
+        if KEYWORD_RED in note:
+            red_rows.append(idx)
+        # 5. ملاحظات جوهرية
+        elif any(kw in note for kw in NOTES_KEYWORDS):
+            orange_rows.append(idx)
+
+    yellow_idx = [i for i, _ in yellow_rows]
+
+    # ── بناء Excel ───────────────────────────────────────────────────────────
+    output   = io.BytesIO()
+    df_out   = df[columns_order].copy()
     workbook = xlsxwriter.Workbook(output, {"in_memory": True})
-    ws = workbook.add_worksheet("الطالبات")
+    ws       = workbook.add_worksheet("الطالبات")
     ws.right_to_left()
 
-    # الصيغ
     def fmt(extra=None):
         base = {"font_name": "Calibri", "font_size": 11,
                 "align": "center", "valign": "vcenter",
@@ -816,67 +869,74 @@ def process_stage2_file(file_bytes, days_list):
             base.update(extra)
         return workbook.add_format(base)
 
-    header_fmt   = workbook.add_format({"bold": True, "font_name": "Calibri",
-                                        "font_size": 11, "align": "center",
-                                        "valign": "vcenter", "border": 1,
-                                        "bg_color": COLOR_HEADER, "locked": False})
-    normal_fmt   = fmt()
-    num_fmt      = fmt({"num_format": "0"})
-    red_fmt      = fmt({"bg_color": COLOR_RED})
-    red_num_fmt  = fmt({"bg_color": COLOR_RED,   "num_format": "0"})
-    orange_fmt   = fmt({"bg_color": COLOR_ORANGE})
+    header_fmt     = workbook.add_format({"bold": True, "font_name": "Calibri",
+                                          "font_size": 11, "align": "center",
+                                          "valign": "vcenter", "border": 1,
+                                          "bg_color": COLOR_HEADER, "locked": False})
+    normal_fmt     = fmt()
+    num_fmt        = fmt({"num_format": "0"})
+    time_fmt       = fmt({"num_format": "h:mm"})   # تنسيق وقت موحد
+    red_fmt        = fmt({"bg_color": COLOR_RED})
+    red_num_fmt    = fmt({"bg_color": COLOR_RED,    "num_format": "0"})
+    orange_fmt     = fmt({"bg_color": COLOR_ORANGE})
     orange_num_fmt = fmt({"bg_color": COLOR_ORANGE, "num_format": "0"})
-    yellow_fmt   = fmt({"bg_color": COLOR_YELLOW})
-    arial_fmt    = fmt({"font_name": "Arial"})
-    red_arial    = fmt({"bg_color": COLOR_RED,    "font_name": "Arial"})
-    orange_arial = fmt({"bg_color": COLOR_ORANGE, "font_name": "Arial"})
+    yellow_fmt     = fmt({"bg_color": COLOR_YELLOW})
+    arial_fmt      = fmt({"font_name": "Arial"})
+    red_arial      = fmt({"bg_color": COLOR_RED,    "font_name": "Arial"})
+    orange_arial   = fmt({"bg_color": COLOR_ORANGE, "font_name": "Arial"})
+    yellow_arial   = fmt({"bg_color": COLOR_YELLOW, "font_name": "Arial"})
 
     col_widths = [7, 24, 14.1, 13.3, 7, 6, 5.3, 6.9, 19.8, 11.4, 10.7, 14, 39.8]
     for i, w in enumerate(col_widths):
         ws.set_column(i, i, w)
 
-    # هيدر
     for ci, cn in enumerate(columns_order):
         ws.write(0, ci, cn, header_fmt)
 
     numeric_cols = {"الرقم", "رقم الواتس اب", "المواليد"}
 
-    for row_idx, row in df.iterrows():
+    for row_idx, row in df_out.iterrows():
         er = row_idx + 1
         is_red    = row_idx in red_rows
         is_orange = row_idx in orange_rows
-        is_yellow = row_idx in time_period_issues
+        is_yellow = row_idx in yellow_idx
+        is_warn   = row_idx in empty_status_rows or row_idx in wrong_data_rows
 
         for ci, cn in enumerate(columns_order):
             val = row[cn]
             val = "" if pd.isna(val) else val
 
-            # تحديد الصيغة
+            # اختر لون الصف (الأولوية: أحمر > برتقالي > أصفر > عادي)
+            # أصفر: تعارض وقت/فترة + بيانات خاطئة (حالة فارغة أو غير أنهت مع بيانات)
+            if is_red:
+                row_color = "red"
+            elif is_orange:
+                row_color = "orange"
+            elif is_yellow or is_warn:
+                row_color = "yellow"
+            else:
+                row_color = "normal"
+
             if cn == "الفترة":
-                if is_red:    f = red_arial
-                elif is_orange: f = orange_arial
-                else:         f = arial_fmt
+                f = {"red": red_arial, "orange": orange_arial,
+                     "yellow": yellow_arial}.get(row_color, arial_fmt)
             elif cn in numeric_cols and val != "":
                 try:
                     val = int(str(val).replace(".0", ""))
                 except Exception:
                     pass
-                if is_red:    f = red_num_fmt
-                elif is_orange: f = orange_num_fmt
-                else:         f = num_fmt
+                f = {"red": red_num_fmt, "orange": orange_num_fmt,
+                     "yellow": yellow_fmt}.get(row_color, num_fmt)
             else:
-                if is_red:    f = red_fmt
-                elif is_orange: f = orange_fmt
-                elif cn == "توقيت الاختبار" and is_yellow: f = yellow_fmt
-                elif cn == "الفترة"          and is_yellow: f = yellow_fmt
-                else:         f = normal_fmt
+                f = {"red": red_fmt, "orange": orange_fmt,
+                     "yellow": yellow_fmt}.get(row_color, normal_fmt)
 
             ws.write(er, ci, str(val) if isinstance(val, str) else val, f)
 
-    # فك الحماية الكاملة — بدون ws.protect()
     workbook.close()
     output.seek(0)
-    return output.read(), len(red_rows), len(orange_rows), len(time_period_issues), day_report
+    return (output.read(), len(red_rows), len(orange_rows),
+            len(yellow_rows), len(empty_status_rows) + len(wrong_data_rows), day_report)
 
 
 # ── واجهة المرحلة الثانية ───────────────────────────────────────────────────
@@ -917,7 +977,7 @@ if uploaded_stage2:
             <b>دليل الألوان:</b> &nbsp;
             <span style="background:#FF9999;padding:2px 10px;border-radius:4px;">🔴 شرطي</span> &nbsp;
             <span style="background:#FFD580;padding:2px 10px;border-radius:4px;">🟠 ملاحظة جوهرية</span> &nbsp;
-            <span style="background:#FFFF99;padding:2px 10px;border-radius:4px;">🟡 تعارض فترة/وقت</span>
+            <span style="background:#FFFF99;padding:2px 10px;border-radius:4px;">🟡 تعارض وقت/فترة · حالة فارغة · بيانات خاطئة</span>
         </div>
         """,
         unsafe_allow_html=True,
@@ -928,17 +988,18 @@ if uploaded_stage2:
             stage2_results = {}
             stage2_errors  = []
             day_reports    = {}
-            total_red = total_orange = total_yellow = 0
+            total_red = total_orange = total_yellow = total_issues = 0
 
             for uf in uploaded_stage2:
                 try:
                     fb = uf.read()
-                    out_bytes, n_red, n_orange, n_yellow, d_report = process_stage2_file(fb, days_list)
+                    out_bytes, n_red, n_orange, n_yellow, n_issues, d_report = process_stage2_file(fb, days_list)
                     out_name = uf.name
                     stage2_results[out_name] = out_bytes
                     total_red    += n_red
                     total_orange += n_orange
                     total_yellow += n_yellow
+                    total_issues += n_issues
                     if d_report.get("has_issue") or d_report.get("unassigned", 0) > 0:
                         day_reports[uf.name] = d_report
                 except Exception as e:
@@ -948,15 +1009,17 @@ if uploaded_stage2:
             st.error(e)
 
         if stage2_results:
-            cols2 = st.columns(4)
+            cols2 = st.columns(5)
             with cols2[0]:
                 st.markdown('<div class="stat-card"><div class="number">' + str(len(stage2_results)) + '</div><div class="label">ملف معالج</div></div>', unsafe_allow_html=True)
             with cols2[1]:
-                st.markdown('<div class="stat-card"><div class="number" style="color:#c0392b">' + str(total_red) + '</div><div class="label">صف شرطي 🔴</div></div>', unsafe_allow_html=True)
+                st.markdown('<div class="stat-card"><div class="number" style="color:#c0392b">' + str(total_red) + '</div><div class="label">شرطي 🔴</div></div>', unsafe_allow_html=True)
             with cols2[2]:
                 st.markdown('<div class="stat-card"><div class="number" style="color:#e67e22">' + str(total_orange) + '</div><div class="label">ملاحظة جوهرية 🟠</div></div>', unsafe_allow_html=True)
             with cols2[3]:
-                st.markdown('<div class="stat-card"><div class="number" style="color:#b7950b">' + str(total_yellow) + '</div><div class="label">تعارض فترة 🟡</div></div>', unsafe_allow_html=True)
+                st.markdown('<div class="stat-card"><div class="number" style="color:#b7950b">' + str(total_yellow + total_issues) + '</div><div class="label">يحتاج مراجعة 🟡</div></div>', unsafe_allow_html=True)
+            with cols2[4]:
+                st.markdown('<div class="stat-card"><div class="number" style="color:#555">' + str(sum(len(r["days"]) for r in day_reports.values())) + '</div><div class="label">أيام مكتظة 📊</div></div>', unsafe_allow_html=True)
 
             # ── تقرير توزيع الأيام ──────────────────────────────────────────────
             if day_reports:
