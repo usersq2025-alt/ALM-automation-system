@@ -20,7 +20,7 @@ st.markdown(
     .stApp { background: linear-gradient(135deg, #f8f4ef 0%, #ede8e0 100%); }
     h1, h2, h3 { font-family: 'Tajawal', sans-serif !important; }
     .hero-header {
-        background: linear-gradient(135deg, #2d5016 0%, #4a7c28 50%, #6ba535 100%);
+        background: linear-gradient(135deg, #3d2060 0%, #6b3fa0 50%, #8b5cc8 100%);
         border-radius: 16px; padding: 2rem 2.5rem; margin-bottom: 2rem;
         box-shadow: 0 8px 32px rgba(45,80,22,0.25); text-align: center; color: white;
     }
@@ -28,38 +28,43 @@ st.markdown(
     .hero-header p { font-size: 1.05rem; margin: 0.5rem 0 0; opacity: 0.88; font-weight: 300; }
     .stat-card {
         background: white; border-radius: 12px; padding: 1.2rem 1.5rem;
-        box-shadow: 0 2px 12px rgba(0,0,0,0.07); border-right: 4px solid #4a7c28; margin-bottom: 1rem;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.07); border-right: 4px solid #6b3fa0; margin-bottom: 1rem;
     }
-    .stat-card .number { font-size: 2rem; font-weight: 900; color: #2d5016; line-height: 1; }
+    .stat-card .number { font-size: 2rem; font-weight: 900; color: #3d2060; line-height: 1; }
     .stat-card .label { font-size: 0.85rem; color: #777; margin-top: 4px; }
     .file-chip {
-        display: inline-block; background: #e8f5e0; border: 1px solid #a8d878;
-        color: #2d5016; border-radius: 20px; padding: 4px 14px;
+        display: inline-block; background: #f0e8fb; border: 1px solid #c4a0e8;
+        color: #3d2060; border-radius: 20px; padding: 4px 14px;
         font-size: 0.82rem; margin: 3px; font-weight: 500;
     }
     .success-banner {
-        background: linear-gradient(90deg, #e8f5e0, #d4edbe); border: 1px solid #a8d878;
-        border-radius: 10px; padding: 1rem 1.5rem; color: #2d5016;
+        background: linear-gradient(90deg, #f0e8fb, #e0d0f8); border: 1px solid #c4a0e8;
+        border-radius: 10px; padding: 1rem 1.5rem; color: #3d2060;
         font-weight: 600; font-size: 1.05rem; margin: 1rem 0;
     }
     .section-title {
-        font-size: 1.1rem; font-weight: 700; color: #2d5016;
-        border-bottom: 2px solid #a8d878; padding-bottom: 6px; margin: 1.5rem 0 1rem;
+        font-size: 1.1rem; font-weight: 700; color: #3d2060;
+        border-bottom: 2px solid #c4a0e8; padding-bottom: 6px; margin: 1.5rem 0 1rem;
     }
-    [data-testid="stSidebar"] { background: linear-gradient(180deg, #1a3a08 0%, #2d5016 100%) !important; }
-    [data-testid="stSidebar"] * { color: #d8f0b8 !important; }
+    [data-testid="stSidebar"] { background: linear-gradient(180deg, #2d1b4e 0%, #3d2060 100%) !important; }
+    [data-testid="stSidebar"] * { color: #e8d5f8 !important; }
     [data-testid="stSidebar"] .stTextArea textarea {
-        background: rgba(255,255,255,0.1) !important;
-        border: 1px solid rgba(168,216,120,0.4) !important;
-        color: #f0f8e8 !important;
+        background: rgba(255,255,255,0.15) !important;
+        border: 1px solid rgba(196,160,232,0.6) !important;
+        color: #ffffff !important;
         font-family: 'Tajawal', sans-serif !important;
         direction: rtl;
+        font-size: 0.9rem !important;
+    }
+    [data-testid="stSidebar"] .stTextArea label,
+    [data-testid="stSidebar"] .stTextArea p {
+        color: #e8d5f8 !important;
     }
     [data-testid="stSidebar"] label { font-weight: 600 !important; font-size: 0.9rem !important; }
     .stButton > button { font-family: 'Tajawal', sans-serif !important; font-weight: 700 !important; border-radius: 10px !important; }
     .stButton > button[kind="primary"] {
-        background: linear-gradient(135deg, #2d5016, #4a7c28) !important;
-        border: none !important; box-shadow: 0 4px 15px rgba(45,80,22,0.3) !important;
+        background: linear-gradient(135deg, #3d2060, #6b3fa0) !important;
+        border: none !important; box-shadow: 0 4px 15px rgba(45,27,78,0.3) !important;
     }
     .stDownloadButton > button {
         background: linear-gradient(135deg, #1a5276, #2874a6) !important;
@@ -69,7 +74,7 @@ st.markdown(
         box-shadow: 0 4px 15px rgba(26,82,118,0.3) !important;
     }
     .upload-zone {
-        background: white; border: 2px dashed #a8d878; border-radius: 16px;
+        background: white; border: 2px dashed #c4a0e8; border-radius: 16px;
         padding: 2rem; text-align: center; margin: 1rem 0;
     }
     </style>
@@ -200,12 +205,8 @@ def get_teacher_name(full_name):
     """مثال: ابتسام خالد سمونة → ابتسام سمونة"""
     name_str = str(full_name).strip()
     parts = name_str.split()
-    
     if len(parts) > 1:
-        # دمج الكلمة الأولى (الاسم) مع الكلمة الأخيرة (الكنية)
-        return f"{parts[0]} {parts[-1]}"
-    
-    # في حال كان الاسم المدخل كلمة واحدة فقط
+        return parts[0] + " " + parts[-1]
     return parts[0] if parts else name_str
 
 
@@ -388,10 +389,9 @@ def process_files(uploaded_files, days, periods, statuses):
             teacher_col = next((c for c in df.columns if "المعلمة" in str(c)), None)
             if teacher_col and not df[teacher_col].dropna().empty:
                 raw_name = str(df[teacher_col].dropna().iloc[0]).strip()
-                first_name = get_first_name(raw_name)
-                # Write only first name in the المعلمة column
-                df[teacher_col] = first_name
-                short = first_name
+                teacher_display = get_teacher_name(raw_name)
+                df[teacher_col] = teacher_display
+                short = teacher_display
             else:
                 short = uf.name.rsplit(".", 1)[0]
 
@@ -417,8 +417,8 @@ with st.sidebar:
         """
         <div style='text-align:center; padding:1rem 0 0.5rem;'>
             <div style='font-size:2.5rem'>📖</div>
-            <div style='font-size:1.2rem; font-weight:900; color:#d8f0b8;'>إعدادات الدورة</div>
-            <div style='font-size:0.8rem; color:#a8d878; margin-top:4px;'>خصّصي القيم لكل دورة</div>
+            <div style='font-size:1.2rem; font-weight:900; color:#e8d5f8;'>إعدادات الدورة</div>
+            <div style='font-size:0.8rem; color:#c4a0e8; margin-top:4px;'>خصّصي القيم لكل دورة</div>
         </div>
         <hr style='border-color:rgba(168,216,120,0.3); margin:0.8rem 0;'>
         """,
@@ -450,7 +450,7 @@ with st.sidebar:
 
     st.markdown(
         "<div style='margin-top:1rem; padding:0.8rem; background:rgba(255,255,255,0.08);"
-        "border-radius:8px; font-size:0.82rem; color:#a8d878;'>"
+        "border-radius:8px; font-size:0.82rem; color:#c4a0e8;'>"
         "✅ " + str(len(days_list)) + " أيام &nbsp;|&nbsp; ✅ "
         + str(len(periods_list)) + " فترات &nbsp;|&nbsp; ✅ "
         + str(len(statuses_list)) + " حالة</div>",
@@ -550,7 +550,7 @@ else:
         """
         <div class="upload-zone">
             <div style="font-size:3rem; margin-bottom:0.5rem">📂</div>
-            <div style="font-size:1.1rem; font-weight:600; color:#4a7c28;">لم يتم رفع أي ملفات بعد</div>
+            <div style="font-size:1.1rem; font-weight:600; color:#6b3fa0;">لم يتم رفع أي ملفات بعد</div>
             <div style="font-size:0.85rem; color:#888; margin-top:0.3rem;">يدعم الصيغ: xlsx, xls, csv</div>
         </div>
         """,
@@ -559,7 +559,7 @@ else:
 
 st.markdown(
     """
-    <hr style="margin:2rem 0 1rem; border-color:#d0e8c0;">
+    <hr style="margin:2rem 0 1rem; border-color:#d8c8f0;">
     <div style="text-align:center; color:#999; font-size:0.8rem; font-family:'Tajawal',sans-serif;">
         أداة مقرأة — مبنية بـ Python & Streamlit &nbsp;|&nbsp; 📖
     </div>
