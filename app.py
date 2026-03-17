@@ -755,21 +755,116 @@ def excel_serial_to_time_str(val):
     return format_time(s)
 
 
-def check_time_period_match(time_str, period_str):
-    """
-    يتحقق إذا كان الوقت يتطابق مع الفترة.
-    يُعيد (صحيح/خطأ, اسم الفترة الصحيحة)
-    """
-    if not time_str or not period_str:
-        return True, None
-    mins = parse_time_to_minutes(time_str)
-    correct = get_period_from_time(mins, PERIOD_SCHEDULE)
-    if correct is None:
-        return True, None  # وقت خارج الجدول — لا نحكم
-    return correct == period_str.strip(), correct
 
 
-def process_stage2_file(file_bytes, days_list):
+def build_distribution_report(day_reports):
+    """
+    يبني ملف Excel واحد يحتوي:
+    - ورقة "ملخص" تجمع كل المعلمات في جدول واحد
+    - ورقة منفصلة لكل معلمة تفصيلية
+    """
+    output   = io.BytesIO()
+    workbook = xlsxwriter.Workbook(output, {"in_memory": True})
+
+    # ── صيغ مشتركة ───────────────────────────────────────────────────────────
+    def fmt(bold=False, bg=None, align="center"):
+        d = {"font_name": "Calibri", "font_size": 11,
+             "align": align, "valign": "vcenter", "border": 1}
+        if bold: d["bold"] = True
+        if bg:   d["bg_color"] = bg
+        return workbook.add_format(d)
+
+    hdr_fmt  = fmt(bold=True, bg="#3d2060", align="center")
+    hdr_fmt.set_font_color("white")
+    ok_fmt   = fmt()
+    red_fmt  = fmt(bg="#FF9999")
+    grn_fmt  = fmt(bg="#C6EFCE")
+    bold_fmt = fmt(bold=True, align="right")
+    title_fmt = workbook.add_format({"bold": True, "font_name": "Calibri",
+                                     "font_size": 13, "align": "center",
+                                     "valign": "vcenter", "bg_color": "#EDE8F5"})
+
+    # ── ورقة الملخص ──────────────────────────────────────────────────────────
+    ws_sum = workbook.add_worksheet("ملخص")
+    ws_sum.right_to_left()
+    ws_sum.set_column(0, 0, 25)   # المعلمة
+    ws_sum.set_column(1, 1, 10)   # إجمالي
+    ws_sum.set_column(2, 2, 10)   # بدون يوم
+    ws_sum.set_column(3, 3, 12)   # فيها ضغط
+    ws_sum.set_column(4, 4, 15)   # الحالة العامة
+
+    ws_sum.merge_range(0, 0, 0, 4, "ملخص توزيع الأيام — جميع المعلمات", title_fmt)
+    ws_sum.set_row(0, 25)
+
+    for ci, h in enumerate(["المعلمة", "أنهين المقرر", "بدون يوم", "أيام مكتظة", "الحالة"]):
+        ws_sum.write(1, ci, h, hdr_fmt)
+
+    for ri, (fname, report) in enumerate(day_reports.items()):
+        r          = ri + 2
+        teacher    = fname.replace(".xlsx", "")
+        total      = report.get("total", 0)
+        unassigned = report.get("unassigned", 0)
+        over_days  = sum(1 for d in report.get("days", {}).values() if "🔴" in d["status"])
+        has_issue  = report.get("has_issue", False) or unassigned > 0
+
+        row_fmt = red_fmt if has_issue else ok_fmt
+        status_txt = "⚠️ يحتاج تدخل" if has_issue else "✅ موزّع بشكل جيد"
+        ws_sum.write(r, 0, teacher,    row_fmt)
+        ws_sum.write(r, 1, total,      row_fmt)
+        ws_sum.write(r, 2, unassigned, red_fmt if unassigned else ok_fmt)
+        ws_sum.write(r, 3, over_days,  red_fmt if over_days  else ok_fmt)
+        ws_sum.write(r, 4, status_txt, row_fmt)
+
+    # ── ورقة لكل معلمة ───────────────────────────────────────────────────────
+    for fname, report in day_reports.items():
+        teacher  = fname.replace(".xlsx", "")
+        # اسم الورقة: أول 31 حرف (حد Excel)
+        sh_name  = teacher[:31]
+        ws       = workbook.add_worksheet(sh_name)
+        ws.right_to_left()
+        ws.set_column(0, 0, 22)
+        ws.set_column(1, 1, 10)
+        ws.set_column(2, 2, 10)
+        ws.set_column(3, 3, 35)
+
+        # عنوان
+        ws.merge_range(0, 0, 0, 3, "تقرير توزيع الأيام — " + teacher, title_fmt)
+        ws.set_row(0, 25)
+
+        # معلومات عامة
+        total      = report.get("total", 0)
+        unassigned = report.get("unassigned", 0)
+        base       = report.get("ideal_base", 0)
+        xtra       = report.get("ideal_extra", 0)
+        ideal_txt  = str(base) + (" (+1 لأول " + str(xtra) + " أيام)" if xtra else " لكل يوم")
+
+        ws.write(1, 0, "إجمالي اللواتي أنهين المقرر:", bold_fmt)
+        ws.write(1, 1, total, ok_fmt)
+        ws.write(2, 0, "التوزيع المثالي:", bold_fmt)
+        ws.write(2, 1, ideal_txt, ok_fmt)
+        if unassigned:
+            ws.write(3, 0, "⚠️ بدون يوم محدد:", bold_fmt)
+            ws.write(3, 1, unassigned, red_fmt)
+
+        # هيدر جدول الأيام
+        for ci, h in enumerate(["اليوم", "الفعلي", "المثالي", "الحالة"]):
+            ws.write(5, ci, h, hdr_fmt)
+
+        for ri, (day, info) in enumerate(report.get("days", {}).items()):
+            r       = ri + 6
+            is_over = "🔴" in info["status"]
+            is_avail= "🟢" in info["status"]
+            df      = red_fmt if is_over else (grn_fmt if is_avail else ok_fmt)
+            ws.write(r, 0, day,            df)
+            ws.write(r, 1, info["actual"], df)
+            ws.write(r, 2, info["ideal"],  df)
+            ws.write(r, 3, info["status"], df)
+
+    workbook.close()
+    output.seek(0)
+    return output.read()
+
+def process_stage2_file(file_bytes, days_list, statuses_list, periods_list):
     """معالجة ملف واحد مُعاد من المعلمة"""
     import xlsxwriter
 
@@ -800,7 +895,6 @@ def process_stage2_file(file_bytes, days_list):
     # ── فحص كل صف ────────────────────────────────────────────────────────────
     red_rows          = []   # شرطي
     orange_rows       = []   # ملاحظات جوهرية
-    yellow_rows       = []   # تعارض وقت/فترة
     empty_status_rows = []   # حالة فارغة
     wrong_data_rows   = []   # بيانات خاطئة (أنهت بلا يوم / لم تنه بها بيانات)
 
@@ -828,11 +922,7 @@ def process_stage2_file(file_bytes, days_list):
             if not day or day == "nan":
                 wrong_data_rows.append(idx)
 
-            # تحقق من تطابق الوقت مع الفترة
-            if time_str and period:
-                match, correct_p = check_time_period_match(time_str, period)
-                if not match:
-                    yellow_rows.append((idx, correct_p))
+
 
         # 3. غير أنهت → يجب أن تكون خلايا اليوم/الوقت/الفترة فارغة
         else:
@@ -851,8 +941,6 @@ def process_stage2_file(file_bytes, days_list):
         # 5. ملاحظات جوهرية
         elif any(kw in note for kw in NOTES_KEYWORDS):
             orange_rows.append(idx)
-
-    yellow_idx = [i for i, _ in yellow_rows]
 
     # ── بناء Excel ───────────────────────────────────────────────────────────
     output   = io.BytesIO()
@@ -875,7 +963,6 @@ def process_stage2_file(file_bytes, days_list):
                                           "bg_color": COLOR_HEADER, "locked": False})
     normal_fmt     = fmt()
     num_fmt        = fmt({"num_format": "0"})
-    time_fmt       = fmt({"num_format": "h:mm"})   # تنسيق وقت موحد
     red_fmt        = fmt({"bg_color": COLOR_RED})
     red_num_fmt    = fmt({"bg_color": COLOR_RED,    "num_format": "0"})
     orange_fmt     = fmt({"bg_color": COLOR_ORANGE})
@@ -899,7 +986,6 @@ def process_stage2_file(file_bytes, days_list):
         er = row_idx + 1
         is_red    = row_idx in red_rows
         is_orange = row_idx in orange_rows
-        is_yellow = row_idx in yellow_idx
         is_warn   = row_idx in empty_status_rows or row_idx in wrong_data_rows
 
         for ci, cn in enumerate(columns_order):
@@ -912,7 +998,7 @@ def process_stage2_file(file_bytes, days_list):
                 row_color = "red"
             elif is_orange:
                 row_color = "orange"
-            elif is_yellow or is_warn:
+            elif is_warn:
                 row_color = "yellow"
             else:
                 row_color = "normal"
@@ -933,10 +1019,30 @@ def process_stage2_file(file_bytes, days_list):
 
             ws.write(er, ci, str(val) if isinstance(val, str) else val, f)
 
+    # ── القوائم المنسدلة (نفس المرحلة الأولى) ───────────────────────────────
+    num_rows    = len(df_out)
+    last_dv_row = num_rows + 50
+
+    if days_list:
+        ws.data_validation(1, 9, last_dv_row, 9, {
+            "validate": "list", "source": days_list,
+            "show_input": True, "show_error": True,
+        })
+    if statuses_list:
+        ws.data_validation(1, 8, last_dv_row, 8, {
+            "validate": "list", "source": statuses_list,
+            "show_input": True, "show_error": True,
+        })
+    if periods_list:
+        ws.data_validation(1, 11, last_dv_row, 11, {
+            "validate": "list", "source": periods_list,
+            "show_input": True, "show_error": True,
+        })
+
     workbook.close()
     output.seek(0)
     return (output.read(), len(red_rows), len(orange_rows),
-            len(yellow_rows), len(empty_status_rows) + len(wrong_data_rows), day_report)
+            len(empty_status_rows) + len(wrong_data_rows), day_report)
 
 
 # ── واجهة المرحلة الثانية ───────────────────────────────────────────────────
@@ -977,7 +1083,7 @@ if uploaded_stage2:
             <b>دليل الألوان:</b> &nbsp;
             <span style="background:#FF9999;padding:2px 10px;border-radius:4px;">🔴 شرطي</span> &nbsp;
             <span style="background:#FFD580;padding:2px 10px;border-radius:4px;">🟠 ملاحظة جوهرية</span> &nbsp;
-            <span style="background:#FFFF99;padding:2px 10px;border-radius:4px;">🟡 تعارض وقت/فترة · حالة فارغة · بيانات خاطئة</span>
+            <span style="background:#FFFF99;padding:2px 10px;border-radius:4px;">🟡 حالة فارغة · بيانات خاطئة تحتاج مراجعة</span>
         </div>
         """,
         unsafe_allow_html=True,
@@ -988,17 +1094,16 @@ if uploaded_stage2:
             stage2_results = {}
             stage2_errors  = []
             day_reports    = {}
-            total_red = total_orange = total_yellow = total_issues = 0
+            total_red = total_orange = total_issues = 0
 
             for uf in uploaded_stage2:
                 try:
                     fb = uf.read()
-                    out_bytes, n_red, n_orange, n_yellow, n_issues, d_report = process_stage2_file(fb, days_list)
+                    out_bytes, n_red, n_orange, n_issues, d_report = process_stage2_file(fb, days_list, statuses_list, periods_list)
                     out_name = uf.name
                     stage2_results[out_name] = out_bytes
                     total_red    += n_red
                     total_orange += n_orange
-                    total_yellow += n_yellow
                     total_issues += n_issues
                     if d_report.get("has_issue") or d_report.get("unassigned", 0) > 0:
                         day_reports[uf.name] = d_report
@@ -1017,54 +1122,30 @@ if uploaded_stage2:
             with cols2[2]:
                 st.markdown('<div class="stat-card"><div class="number" style="color:#e67e22">' + str(total_orange) + '</div><div class="label">ملاحظة جوهرية 🟠</div></div>', unsafe_allow_html=True)
             with cols2[3]:
-                st.markdown('<div class="stat-card"><div class="number" style="color:#b7950b">' + str(total_yellow + total_issues) + '</div><div class="label">يحتاج مراجعة 🟡</div></div>', unsafe_allow_html=True)
+                st.markdown('<div class="stat-card"><div class="number" style="color:#b7950b">' + str(total_issues) + '</div><div class="label">يحتاج مراجعة 🟡</div></div>', unsafe_allow_html=True)
             with cols2[4]:
                 st.markdown('<div class="stat-card"><div class="number" style="color:#555">' + str(sum(len(r["days"]) for r in day_reports.values())) + '</div><div class="label">أيام مكتظة 📊</div></div>', unsafe_allow_html=True)
 
-            # ── تقرير توزيع الأيام ──────────────────────────────────────────────
+            # ── تقرير توزيع الأيام — ملف Excel واحد ──────────────────────────
             if day_reports:
+                report_bytes = build_distribution_report(day_reports)
+                has_any_issue = any(
+                    r.get("has_issue") or r.get("unassigned", 0) > 0
+                    for r in day_reports.values()
+                )
                 st.markdown('<div class="section-title">📊 تقرير توزيع الأيام</div>', unsafe_allow_html=True)
-                for fname, report in day_reports.items():
-                    total_finished = report.get("total", 0)
-                    unassigned     = report.get("unassigned", 0)
-                    base           = report.get("ideal_base", 0)
-                    xtra           = report.get("ideal_extra", 0)
-
-                    st.markdown(
-                        "<div style='background:white;border-radius:10px;padding:1rem 1.5rem;"
-                        "margin-bottom:1rem;border:1px solid #e0d0f8;direction:rtl;'>"
-                        "<div style='font-weight:700;font-size:1rem;color:#3d2060;margin-bottom:0.6rem;'>"
-                        "📄 " + fname + "</div>"
-                        "<div style='font-size:0.85rem;color:#555;margin-bottom:0.6rem;'>"
-                        "إجمالي اللواتي أنهين المقرر: <b>" + str(total_finished) + "</b> &nbsp;|&nbsp; "
-                        "التوزيع المثالي: <b>" + str(base) + ("+" if xtra else "") + ("1 لأول " + str(xtra) + " أيام" if xtra else "") + " لكل يوم</b>"
-                        + (" &nbsp;|&nbsp; <span style='color:#e67e22;font-weight:600;'>⚠️ " + str(unassigned) + " بدون يوم</span>" if unassigned else "") +
-                        "</div>",
-                        unsafe_allow_html=True,
-                    )
-
-                    rows_html = ""
-                    for day, info in report.get("days", {}).items():
-                        bg = "#fff5f5" if "🔴" in info["status"] else ("#f0fff4" if "🟢" in info["status"] else "#fafafa")
-                        rows_html += (
-                            "<tr style='background:" + bg + ";'>"
-                            "<td style='padding:6px 12px;font-weight:600;'>" + day + "</td>"
-                            "<td style='padding:6px 12px;text-align:center;'>" + str(info["actual"]) + "</td>"
-                            "<td style='padding:6px 12px;text-align:center;'>" + str(info["ideal"]) + "</td>"
-                            "<td style='padding:6px 12px;'>" + info["status"] + "</td>"
-                            "</tr>"
-                        )
-
-                    st.markdown(
-                        "<table style='width:100%;border-collapse:collapse;font-size:0.88rem;'>"
-                        "<thead><tr style='background:#f0e8fb;'>"
-                        "<th style='padding:7px 12px;text-align:right;'>اليوم</th>"
-                        "<th style='padding:7px 12px;'>الفعلي</th>"
-                        "<th style='padding:7px 12px;'>المثالي</th>"
-                        "<th style='padding:7px 12px;text-align:right;'>الحالة</th>"
-                        "</tr></thead><tbody>" + rows_html + "</tbody></table></div>",
-                        unsafe_allow_html=True,
-                    )
+                if has_any_issue:
+                    st.warning("⚠️ يوجد أيام مكتظة أو طالبات بدون يوم — راجعي التقرير")
+                else:
+                    st.success("✅ التوزيع متوازن لدى جميع المعلمات")
+                st.download_button(
+                    label="⬇️ تحميل تقرير التوزيع — Excel",
+                    data=report_bytes,
+                    file_name="تقرير_توزيع_الأيام.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                    key="report_download",
+                )
 
             zip2 = io.BytesIO()
             with zipfile.ZipFile(zip2, "w", zipfile.ZIP_DEFLATED) as zf:
