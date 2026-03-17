@@ -16,22 +16,28 @@ st.markdown(
     """
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;900&display=swap');
+
     html, body, [class*="css"] { font-family: 'Tajawal', sans-serif; direction: rtl; }
-    .stApp { background: linear-gradient(135deg, #f8f4ef 0%, #ede8e0 100%); }
+    .stApp { background: linear-gradient(135deg, #f3f0f8 0%, #e8e0f0 100%); }
     h1, h2, h3 { font-family: 'Tajawal', sans-serif !important; }
+
+    /* ── Hero ── */
     .hero-header {
         background: linear-gradient(135deg, #3d2060 0%, #6b3fa0 50%, #8b5cc8 100%);
         border-radius: 16px; padding: 2rem 2.5rem; margin-bottom: 2rem;
-        box-shadow: 0 8px 32px rgba(45,80,22,0.25); text-align: center; color: white;
+        box-shadow: 0 8px 32px rgba(61,32,96,0.3); text-align: center; color: white;
     }
     .hero-header h1 { font-size: 2.4rem; font-weight: 900; margin: 0; text-shadow: 0 2px 4px rgba(0,0,0,0.2); }
     .hero-header p { font-size: 1.05rem; margin: 0.5rem 0 0; opacity: 0.88; font-weight: 300; }
+
+    /* ── Cards ── */
     .stat-card {
         background: white; border-radius: 12px; padding: 1.2rem 1.5rem;
         box-shadow: 0 2px 12px rgba(0,0,0,0.07); border-right: 4px solid #6b3fa0; margin-bottom: 1rem;
     }
     .stat-card .number { font-size: 2rem; font-weight: 900; color: #3d2060; line-height: 1; }
     .stat-card .label { font-size: 0.85rem; color: #777; margin-top: 4px; }
+
     .file-chip {
         display: inline-block; background: #f0e8fb; border: 1px solid #c4a0e8;
         color: #3d2060; border-radius: 20px; padding: 4px 14px;
@@ -46,25 +52,68 @@ st.markdown(
         font-size: 1.1rem; font-weight: 700; color: #3d2060;
         border-bottom: 2px solid #c4a0e8; padding-bottom: 6px; margin: 1.5rem 0 1rem;
     }
-    [data-testid="stSidebar"] { background: linear-gradient(180deg, #2d1b4e 0%, #3d2060 100%) !important; }
-    [data-testid="stSidebar"] * { color: #e8d5f8 !important; }
-    [data-testid="stSidebar"] .stTextArea textarea {
-        background: rgba(255,255,255,0.15) !important;
-        border: 1px solid rgba(196,160,232,0.6) !important;
-        color: #ffffff !important;
-        font-family: 'Tajawal', sans-serif !important;
-        direction: rtl;
-        font-size: 0.9rem !important;
+    .upload-zone {
+        background: white; border: 2px dashed #c4a0e8; border-radius: 16px;
+        padding: 2rem; text-align: center; margin: 1rem 0;
     }
-    [data-testid="stSidebar"] .stTextArea label,
-    [data-testid="stSidebar"] .stTextArea p {
+
+    /* ── Sidebar background ── */
+    [data-testid="stSidebar"] > div:first-child {
+        background: linear-gradient(180deg, #2d1b4e 0%, #3d2060 100%) !important;
+    }
+
+    /* ── Sidebar — force ALL text to light purple ── */
+    [data-testid="stSidebar"],
+    [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] span,
+    [data-testid="stSidebar"] div,
+    [data-testid="stSidebar"] label {
         color: #e8d5f8 !important;
+        font-family: 'Tajawal', sans-serif !important;
     }
-    [data-testid="stSidebar"] label { font-weight: 600 !important; font-size: 0.9rem !important; }
-    .stButton > button { font-family: 'Tajawal', sans-serif !important; font-weight: 700 !important; border-radius: 10px !important; }
+    [data-testid="stSidebar"] label {
+        font-weight: 700 !important;
+        font-size: 0.95rem !important;
+    }
+
+    /* ── Sidebar textarea — dark bg + white text ── */
+    [data-testid="stSidebar"] textarea,
+    [data-testid="stSidebar"] .stTextArea textarea {
+        background-color: #1e1035 !important;
+        border: 2px solid #9b6fd4 !important;
+        border-radius: 8px !important;
+        color: #f0e6ff !important;
+        font-family: 'Tajawal', sans-serif !important;
+        font-size: 0.92rem !important;
+        direction: rtl !important;
+        caret-color: #e8d5f8 !important;
+    }
+    [data-testid="stSidebar"] textarea:focus,
+    [data-testid="stSidebar"] .stTextArea textarea:focus {
+        border-color: #c4a0e8 !important;
+        box-shadow: 0 0 0 2px rgba(196,160,232,0.3) !important;
+    }
+    [data-testid="stSidebar"] textarea::placeholder {
+        color: #9b7dbf !important;
+    }
+
+    /* ── Sidebar tooltip/help text ── */
+    [data-testid="stSidebar"] small,
+    [data-testid="stSidebar"] .stMarkdown {
+        color: #c4a0e8 !important;
+    }
+
+    /* ── Buttons ── */
+    .stButton > button {
+        font-family: 'Tajawal', sans-serif !important;
+        font-weight: 700 !important;
+        border-radius: 10px !important;
+    }
     .stButton > button[kind="primary"] {
         background: linear-gradient(135deg, #3d2060, #6b3fa0) !important;
-        border: none !important; box-shadow: 0 4px 15px rgba(45,27,78,0.3) !important;
+        border: none !important;
+        color: white !important;
+        box-shadow: 0 4px 15px rgba(45,27,78,0.3) !important;
     }
     .stDownloadButton > button {
         background: linear-gradient(135deg, #1a5276, #2874a6) !important;
@@ -72,10 +121,6 @@ st.markdown(
         font-weight: 700 !important; border: none !important; border-radius: 10px !important;
         padding: 0.6rem 2rem !important; font-size: 1rem !important;
         box-shadow: 0 4px 15px rgba(26,82,118,0.3) !important;
-    }
-    .upload-zone {
-        background: white; border: 2px dashed #c4a0e8; border-radius: 16px;
-        padding: 2rem; text-align: center; margin: 1rem 0;
     }
     </style>
     """,
