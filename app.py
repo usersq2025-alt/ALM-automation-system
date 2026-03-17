@@ -22,7 +22,7 @@ st.markdown(
     .hero-header {
         background: linear-gradient(135deg, #2d5016 0%, #4a7c28 50%, #6ba535 100%);
         border-radius: 16px; padding: 2rem 2.5rem; margin-bottom: 2rem;
-        box-shadow: 0 8px 32px rgba(45,80,22,0.25); text-align: center; color: white;
+        box-shadow: 0 8px 32px rgba(45,80,22,0.25); text-align: center; color: balck;
     }
     .hero-header h1 { font-size: 2.4rem; font-weight: 900; margin: 0; text-shadow: 0 2px 4px rgba(0,0,0,0.2); }
     .hero-header p { font-size: 1.05rem; margin: 0.5rem 0 0; opacity: 0.88; font-weight: 300; }
