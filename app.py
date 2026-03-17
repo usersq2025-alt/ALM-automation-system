@@ -246,6 +246,68 @@ def read_xlsx_raw(file_bytes):
         return pd.DataFrame(matrix[1:], columns=headers)
 
 
+
+def build_teacher_display_names(full_names_text):
+    """
+    تأخذ نصاً فيه اسم معلمة في كل سطر (الاسم الكامل)
+    وترجع dict: {اسم_كامل: اسم_للعرض}
+    القاعدة:
+      - اسم فريد → الاسم الأول فقط:  ابتسام
+      - اسم مكرر → أول حرف من الكنية: إيمان.ح / إيمان.ن
+      - تعارض → يزداد عدد الأحرف: آلاء.شي / آلاء.شب / دعاء.سي / دعاء.سل
+    """
+    lines = [l.strip() for l in full_names_text.strip().splitlines() if l.strip()]
+    if not lines:
+        return {}
+
+    def make_display(parts, n_chars=1):
+        if len(parts) == 1:
+            return parts[0]
+        last = parts[-1]
+        suffix = last[2:] if (last.startswith("ال") and len(last) > 2) else last
+        return parts[0] + "." + suffix[:n_chars]
+
+    first_count = {}
+    for name in lines:
+        f = name.split()[0] if name.split() else name
+        first_count[f] = first_count.get(f, 0) + 1
+
+    result = {}
+    # الأسماء الفريدة أولاً
+    for name in lines:
+        parts = name.split()
+        if not parts: continue
+        if first_count[parts[0]] == 1:
+            result[name] = parts[0]
+
+    # الأسماء المكررة — زد الأحرف تدريجياً حتى لا يوجد تعارض
+    duplicates = [n for n in lines if n not in result]
+    for max_chars in range(1, 6):
+        temp = {}
+        for name in duplicates:
+            if name in result: continue
+            temp[name] = make_display(name.split(), max_chars)
+
+        all_d = dict(result)
+        all_d.update(temp)
+        count = {}
+        for d in all_d.values():
+            count[d] = count.get(d, 0) + 1
+
+        for name, display in temp.items():
+            if count[display] == 1:
+                result[name] = display
+
+        if len(result) == len(lines):
+            break
+
+    # ما تبقى بدون حل → اسم كامل
+    for name in lines:
+        if name not in result:
+            result[name] = name
+
+    return result
+
 def get_first_name(full_name):
     """ابتسام خالد سمونة → ابتسام"""
     parts = str(full_name).strip().split()
@@ -421,31 +483,88 @@ def build_excel(df, days, periods, statuses):
     return output.read()
 
 
-def process_files(uploaded_files, days, periods, statuses):
+
+def extract_teacher_names(uploaded_files):
+    """
+    يقرأ كل الملفات، يستخرج أسماء المعلمات، ويبني القاموس المقترح.
+    يُعيد (preview_map, errors)
+    """
+    errors = []
+    raw_names_ordered = []  # للحفاظ على الترتيب
+
+    file_cache = []
+    for uf in uploaded_files:
+        try:
+            uf.seek(0)
+            fb = uf.read()
+            uf.seek(0)
+            name_lower = uf.name.lower()
+            if name_lower.endswith(".csv"):
+                df = pd.read_csv(io.BytesIO(fb))
+            elif name_lower.endswith(".xls"):
+                df = pd.read_excel(io.BytesIO(fb), engine="xlrd")
+            else:
+                df = read_xlsx_raw(fb)
+            teacher_col = next((c for c in df.columns if "المعلمة" in str(c)), None)
+            raw = ""
+            if teacher_col and not df[teacher_col].dropna().empty:
+                raw = str(df[teacher_col].dropna().iloc[0]).strip()
+            if raw and raw not in raw_names_ordered:
+                raw_names_ordered.append(raw)
+        except Exception as e:
+            errors.append("❌ " + uf.name + ": " + str(e))
+
+    all_text = chr(10).join(raw_names_ordered)
+    preview_map = build_teacher_display_names(all_text)
+    return preview_map, errors
+
+
+def process_files(uploaded_files, days, periods, statuses, teacher_map=None):
     results = {}
     errors = []
+
+    # ── المرور الأول: اقرأ كل الملفات واستخرج الأسماء الكاملة ───────────────
+    file_data = []   # [(uf.name, file_bytes, df)]
+    raw_names = []   # أسماء المعلمات الكاملة بنفس ترتيب الملفات
 
     for uf in uploaded_files:
         try:
             file_bytes = uf.read()
             name_lower = uf.name.lower()
-
             if name_lower.endswith(".csv"):
                 df = pd.read_csv(io.BytesIO(file_bytes))
             elif name_lower.endswith(".xls"):
                 df = pd.read_excel(io.BytesIO(file_bytes), engine="xlrd")
             else:
                 df = read_xlsx_raw(file_bytes)
-
             teacher_col = next((c for c in df.columns if "المعلمة" in str(c)), None)
+            raw = ""
             if teacher_col and not df[teacher_col].dropna().empty:
-                raw_name = str(df[teacher_col].dropna().iloc[0]).strip()
-                first_name_only = get_first_name(raw_name)
+                raw = str(df[teacher_col].dropna().iloc[0]).strip()
+            file_data.append((uf.name, file_bytes, df, teacher_col, raw))
+            raw_names.append(raw)
+        except Exception as e:
+            errors.append("❌ " + uf.name + ": " + str(e))
+            file_data.append((uf.name, None, None, None, ""))
+            raw_names.append("")
+
+    # ── بناء قاموس الأسماء المختصرة من كل الأسماء دفعة واحدة ────────────────
+    all_names_text = chr(10).join(n for n in raw_names if n)
+    teacher_map = build_teacher_display_names(all_names_text)
+
+    # ── المرور الثاني: اعالج كل ملف مع النسق الصحيح ─────────────────────────
+    for fname, file_bytes, df, teacher_col, raw_name in file_data:
+        if df is None:
+            continue
+        try:
+            if raw_name:
+                col_h_name        = (teacher_map or {}).get(raw_name, get_first_name(raw_name))
                 file_name_display = get_teacher_name(raw_name)
-                df[teacher_col] = first_name_only   # العمود H: الاسم الأول فقط
-                short = file_name_display            # اسم الملف: الاسم الأول + الكنية
+                if teacher_col:
+                    df[teacher_col] = col_h_name
+                short = file_name_display
             else:
-                short = uf.name.rsplit(".", 1)[0]
+                short = fname.rsplit(".", 1)[0]
 
             xlsx_bytes = build_excel(df.copy(), days, periods, statuses)
             out_name = short + ".xlsx"
@@ -454,11 +573,10 @@ def process_files(uploaded_files, days, periods, statuses):
             while out_name in results:
                 out_name = base.replace(".xlsx", "_" + str(counter) + ".xlsx")
                 counter += 1
-
             results[out_name] = xlsx_bytes
 
         except Exception as e:
-            errors.append("❌ " + uf.name + ": " + str(e))
+            errors.append("❌ " + fname + ": " + str(e))
 
     return results, errors
 
@@ -565,9 +683,65 @@ if uploaded_files:
         unsafe_allow_html=True,
     )
 
-    if st.button("⚡ معالجة الملفات وتوليد جداول المعلمات", type="primary", use_container_width=True):
-        with st.spinner("جارٍ المعالجة..."):
-            results, errors = process_files(uploaded_files, days_list, periods_list, statuses_list)
+    # ── خطوة 1: معاينة أسماء المعلمات قبل التنفيذ ──────────────────────────────
+    if st.button("🔍 تحليل الملفات ومعاينة أسماء المعلمات", use_container_width=True):
+        with st.spinner("جارٍ القراءة..."):
+            preview_map, preview_errors = extract_teacher_names(uploaded_files)
+        st.session_state["preview_map"]    = preview_map
+        st.session_state["preview_errors"] = preview_errors
+        st.session_state["confirmed"]      = False
+
+    # ── عرض جدول المعاينة + حقول التعديل ────────────────────────────────────
+    if st.session_state.get("preview_map"):
+        preview_map = st.session_state["preview_map"]
+
+        st.markdown('<div class="section-title">👁️ مراجعة أسماء المعلمات</div>', unsafe_allow_html=True)
+        st.markdown(
+            "<div style='font-size:0.88rem;color:#555;margin-bottom:0.8rem;direction:rtl;'>"
+            "الكود اقترح هذه الأسماء تلقائياً — عدّلي أي اسم لا يناسبكِ ثم اضغطي تأكيد."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+        edited_map = {}
+        cols_h = st.columns([3, 2, 2])
+        cols_h[0].markdown("**الاسم الكامل في الملف**")
+        cols_h[1].markdown("**الاسم المقترح**")
+        cols_h[2].markdown("**الاسم النهائي** (عدّلي هنا)")
+
+        for i, (full_name, suggested) in enumerate(preview_map.items()):
+            c1, c2, c3 = st.columns([3, 2, 2])
+            c1.markdown(
+                "<div style='direction:rtl;padding-top:8px;font-size:0.9rem;'>" + full_name + "</div>",
+                unsafe_allow_html=True,
+            )
+            c2.markdown(
+                "<div style='direction:rtl;padding-top:8px;font-size:0.9rem;"
+                "font-weight:600;color:#6b3fa0;'>" + suggested + "</div>",
+                unsafe_allow_html=True,
+            )
+            final = c3.text_input(
+                "final_" + str(i),
+                value=suggested,
+                label_visibility="collapsed",
+                key="teacher_edit_" + str(i),
+            )
+            edited_map[full_name] = final.strip() if final.strip() else suggested
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        if st.button("⚡ تأكيد ومعالجة الملفات", type="primary", use_container_width=True):
+            with st.spinner("جارٍ المعالجة..."):
+                results, errors = process_files(
+                    uploaded_files, days_list, periods_list, statuses_list, edited_map
+                )
+            st.session_state["stage1_results"] = results
+            st.session_state["stage1_errors"]  = errors
+
+    # ── عرض النتائج ──────────────────────────────────────────────────────────
+    if st.session_state.get("stage1_results"):
+        results = st.session_state["stage1_results"]
+        errors  = st.session_state.get("stage1_errors", [])
 
         for e in errors:
             st.error(e)
@@ -578,7 +752,7 @@ if uploaded_files:
                 unsafe_allow_html=True,
             )
 
-            st.markdown('<div class="section-title">👁️ معاينة الملفات الناتجة</div>', unsafe_allow_html=True)
+            st.markdown('<div class="section-title">📦 تحميل الملفات</div>', unsafe_allow_html=True)
             preview_data = [{"اسم الملف الناتج": fname, "الحالة": "✅ جاهز"} for fname in results]
             st.dataframe(pd.DataFrame(preview_data), use_container_width=True, hide_index=True)
 
@@ -588,7 +762,6 @@ if uploaded_files:
                     zf.writestr(fname, fbytes)
             zip_buffer.seek(0)
 
-            st.markdown('<div class="section-title">📦 تحميل الملفات</div>', unsafe_allow_html=True)
             st.download_button(
                 label="⬇️ تحميل جميع الملفات (" + str(len(results)) + " ملف) — ZIP",
                 data=zip_buffer,
