@@ -487,17 +487,18 @@ def build_excel(df, days, periods, statuses):
 def extract_teacher_names(uploaded_files):
     """
     يقرأ كل الملفات، يستخرج أسماء المعلمات، ويبني القاموس المقترح.
-    يُعيد (preview_map, errors)
+    يُعيد (preview_map, file_bytes_cache, errors)
+    file_bytes_cache: {uf.name: bytes} لتجنب إعادة القراءة لاحقاً
     """
     errors = []
-    raw_names_ordered = []  # للحفاظ على الترتيب
+    raw_names_ordered = []
+    file_bytes_cache  = {}
 
-    file_cache = []
     for uf in uploaded_files:
         try:
             uf.seek(0)
             fb = uf.read()
-            uf.seek(0)
+            file_bytes_cache[uf.name] = fb          # احفظ الـ bytes
             name_lower = uf.name.lower()
             if name_lower.endswith(".csv"):
                 df = pd.read_csv(io.BytesIO(fb))
@@ -516,7 +517,70 @@ def extract_teacher_names(uploaded_files):
 
     all_text = chr(10).join(raw_names_ordered)
     preview_map = build_teacher_display_names(all_text)
-    return preview_map, errors
+    return preview_map, file_bytes_cache, errors
+
+
+def process_files_from_cache(file_bytes_cache, days, periods, statuses, teacher_map=None):
+    """
+    نفس process_files لكن تعمل على dict {filename: bytes} بدل uploaded_files
+    لتجنب إعادة قراءة الملفات بعد انتهاء صلاحية الـ uploader
+    """
+    results = {}
+    errors  = []
+
+    file_data = []
+    raw_names = []
+
+    for fname, fb in file_bytes_cache.items():
+        try:
+            name_lower = fname.lower()
+            if name_lower.endswith(".csv"):
+                df = pd.read_csv(io.BytesIO(fb))
+            elif name_lower.endswith(".xls"):
+                df = pd.read_excel(io.BytesIO(fb), engine="xlrd")
+            else:
+                df = read_xlsx_raw(fb)
+            teacher_col = next((c for c in df.columns if "المعلمة" in str(c)), None)
+            raw = ""
+            if teacher_col and not df[teacher_col].dropna().empty:
+                raw = str(df[teacher_col].dropna().iloc[0]).strip()
+            file_data.append((fname, df, teacher_col, raw))
+            raw_names.append(raw)
+        except Exception as e:
+            errors.append("❌ " + fname + ": " + str(e))
+            file_data.append((fname, None, None, ""))
+            raw_names.append("")
+
+    # استخدم teacher_map الممررة (المعتمدة من المشرفة) أو ابنِ آلياً
+    if not teacher_map:
+        all_names_text = chr(10).join(n for n in raw_names if n)
+        teacher_map = build_teacher_display_names(all_names_text)
+
+    for fname, df, teacher_col, raw_name in file_data:
+        if df is None:
+            continue
+        try:
+            if raw_name:
+                col_h_name        = teacher_map.get(raw_name, get_first_name(raw_name))
+                file_name_display = get_teacher_name(raw_name)
+                if teacher_col:
+                    df[teacher_col] = col_h_name
+                short = file_name_display
+            else:
+                short = fname.rsplit(".", 1)[0]
+
+            xlsx_bytes = build_excel(df.copy(), days, periods, statuses)
+            out_name = short + ".xlsx"
+            base = out_name
+            counter = 1
+            while out_name in results:
+                out_name = base.replace(".xlsx", "_" + str(counter) + ".xlsx")
+                counter += 1
+            results[out_name] = xlsx_bytes
+        except Exception as e:
+            errors.append("❌ " + fname + ": " + str(e))
+
+    return results, errors
 
 
 def process_files(uploaded_files, days, periods, statuses, teacher_map=None):
@@ -548,9 +612,12 @@ def process_files(uploaded_files, days, periods, statuses, teacher_map=None):
             file_data.append((uf.name, None, None, None, ""))
             raw_names.append("")
 
-    # ── بناء قاموس الأسماء المختصرة من كل الأسماء دفعة واحدة ────────────────
-    all_names_text = chr(10).join(n for n in raw_names if n)
-    teacher_map = build_teacher_display_names(all_names_text)
+    # ── بناء قاموس الأسماء المختصرة ─────────────────────────────────────────
+    # إذا أُرسل teacher_map من الواجهة (بعد مراجعة المشرفة) → استخدمه
+    # وإلا → ابنِ واحداً آلياً
+    if not teacher_map:
+        all_names_text = chr(10).join(n for n in raw_names if n)
+        teacher_map = build_teacher_display_names(all_names_text)
 
     # ── المرور الثاني: اعالج كل ملف مع النسق الصحيح ─────────────────────────
     for fname, file_bytes, df, teacher_col, raw_name in file_data:
@@ -686,10 +753,12 @@ if uploaded_files:
     # ── خطوة 1: معاينة أسماء المعلمات قبل التنفيذ ──────────────────────────────
     if st.button("🔍 تحليل الملفات ومعاينة أسماء المعلمات", use_container_width=True):
         with st.spinner("جارٍ القراءة..."):
-            preview_map, preview_errors = extract_teacher_names(uploaded_files)
-        st.session_state["preview_map"]    = preview_map
-        st.session_state["preview_errors"] = preview_errors
-        st.session_state["confirmed"]      = False
+            preview_map, file_bytes_cache, preview_errors = extract_teacher_names(uploaded_files)
+        st.session_state["preview_map"]        = preview_map
+        st.session_state["file_bytes_cache"]   = file_bytes_cache
+        st.session_state["preview_errors"]     = preview_errors
+        st.session_state["stage1_results"]     = None
+        st.session_state["stage1_errors"]      = None
 
     # ── عرض جدول المعاينة + حقول التعديل ────────────────────────────────────
     if st.session_state.get("preview_map"):
@@ -731,9 +800,10 @@ if uploaded_files:
         st.markdown("<br>", unsafe_allow_html=True)
 
         if st.button("⚡ تأكيد ومعالجة الملفات", type="primary", use_container_width=True):
+            file_bytes_cache = st.session_state.get("file_bytes_cache", {})
             with st.spinner("جارٍ المعالجة..."):
-                results, errors = process_files(
-                    uploaded_files, days_list, periods_list, statuses_list, edited_map
+                results, errors = process_files_from_cache(
+                    file_bytes_cache, days_list, periods_list, statuses_list, edited_map
                 )
             st.session_state["stage1_results"] = results
             st.session_state["stage1_errors"]  = errors
