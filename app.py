@@ -216,6 +216,9 @@ def build_excel(df, days, periods, statuses):
         "الحالة", "يوم الاختبار", "توقيت الاختبار", "الفترة", "الملاحظات",
     ]
 
+    # Numeric columns (A, C, F) — store as numbers
+    numeric_cols = {"الرقم", "رقم الواتس اب", "المواليد"}
+
     for col in columns_order:
         if col not in df.columns:
             df[col] = ""
@@ -228,70 +231,133 @@ def build_excel(df, days, periods, statuses):
     ws = workbook.add_worksheet("الطالبات")
     ws.right_to_left()
 
+    # ── Formats matching ابتسام_2 exactly ─────────────────────────────────────
+    # Header: Calibri 11 Bold, white bg, thin border, center, locked
     header_fmt = workbook.add_format({
-        "bold": True, "font_name": "Tajawal", "font_size": 11,
+        "bold": True,
+        "font_name": "Calibri", "font_size": 11,
         "align": "center", "valign": "vcenter",
-        "fg_color": "#2d5016", "font_color": "white",
-        "border": 1, "text_wrap": True, "locked": True,
-    })
-    locked_fmt = workbook.add_format({
-        "font_name": "Tajawal", "font_size": 10,
-        "align": "center", "valign": "vcenter",
-        "border": 1, "locked": True, "bg_color": "#f5f5f5",
-    })
-    unlocked_fmt = workbook.add_format({
-        "font_name": "Tajawal", "font_size": 10,
-        "align": "center", "valign": "vcenter",
-        "border": 1, "locked": False, "bg_color": "#fffde7",
-    })
-    unlocked_extra_fmt = workbook.add_format({
-        "font_name": "Tajawal", "font_size": 10,
-        "locked": False, "bg_color": "#fff9e6",
+        "border": 1,
+        "locked": True,
     })
 
-    col_widths = [8, 28, 18, 16, 12, 12, 12, 20, 22, 18, 18, 18, 25]
+    # Locked text cells (A–H text): Calibri 11, thin border, center, locked
+    locked_text_fmt = workbook.add_format({
+        "font_name": "Calibri", "font_size": 11,
+        "align": "center", "valign": "vcenter",
+        "border": 1,
+        "locked": True,
+    })
+
+    # Locked numeric cells (الرقم, رقم الواتس اب, المواليد): same + num format
+    locked_num_fmt = workbook.add_format({
+        "font_name": "Calibri", "font_size": 11,
+        "align": "center", "valign": "vcenter",
+        "border": 1,
+        "locked": True,
+        "num_format": "0",
+    })
+
+    # Unlocked cells I–L (Calibri): thin border, center, unlocked
+    unlocked_fmt = workbook.add_format({
+        "font_name": "Calibri", "font_size": 11,
+        "align": "center", "valign": "vcenter",
+        "border": 1,
+        "locked": False,
+    })
+
+    # Unlocked cell L (الفترة) uses Arial per reference file
+    unlocked_arial_fmt = workbook.add_format({
+        "font_name": "Arial", "font_size": 11,
+        "align": "center", "valign": "vcenter",
+        "border": 1,
+        "locked": False,
+    })
+
+    # Unlocked M (الملاحظات): wider, unlocked, border
+    unlocked_notes_fmt = workbook.add_format({
+        "font_name": "Calibri", "font_size": 11,
+        "align": "center", "valign": "vcenter",
+        "border": 1,
+        "locked": False,
+    })
+
+    # ── Column widths matching ابتسام_2 exactly ───────────────────────────────
+    # A=7, B=24, C=14.1, D=13.3, E=7, F=6, G=5.3, H=6.9
+    # I=19.8, J=11.4, K=10.7, L=14, M=39.8
+    col_widths = [7, 24, 14.1, 13.3, 7, 6, 5.3, 6.9, 19.8, 11.4, 10.7, 14, 39.8]
     for i, w in enumerate(col_widths):
         ws.set_column(i, i, w)
 
-    ws.set_row(0, 30)
+    # ── Header row ────────────────────────────────────────────────────────────
     for col_idx, col_name in enumerate(columns_order):
         ws.write(0, col_idx, col_name, header_fmt)
 
+    # ── Data rows ─────────────────────────────────────────────────────────────
     for row_idx, row in df.iterrows():
         excel_row = row_idx + 1
-        ws.set_row(excel_row, 20)
         for col_idx, col_name in enumerate(columns_order):
             val = row[col_name]
             val = "" if pd.isna(val) else val
-            fmt = locked_fmt if col_idx < 8 else unlocked_fmt
-            ws.write(excel_row, col_idx, val, fmt)
 
+            if col_idx < 8:
+                # Locked columns A–H
+                if col_name in numeric_cols and val != "":
+                    try:
+                        val = int(str(val).replace(".0", ""))
+                    except (ValueError, TypeError):
+                        pass
+                    ws.write(excel_row, col_idx, val, locked_num_fmt)
+                else:
+                    ws.write(excel_row, col_idx, str(val) if val != "" else "", locked_text_fmt)
+            else:
+                # Unlocked columns I–M
+                if col_idx == 11:  # L = الفترة → Arial
+                    ws.write(excel_row, col_idx, val, unlocked_arial_fmt)
+                elif col_idx == 12:  # M = الملاحظات
+                    ws.write(excel_row, col_idx, val, unlocked_notes_fmt)
+                else:
+                    ws.write(excel_row, col_idx, val, unlocked_fmt)
+
+    # ── Extra blank rows (50) ─────────────────────────────────────────────────
     for extra in range(extra_rows):
         excel_row = num_rows + 1 + extra
-        ws.set_row(excel_row, 20)
         for col_idx in range(13):
-            fmt = locked_fmt if col_idx < 8 else unlocked_extra_fmt
-            ws.write(excel_row, col_idx, "", fmt)
+            if col_idx < 8:
+                ws.write(excel_row, col_idx, "", locked_text_fmt)
+            elif col_idx == 11:
+                ws.write(excel_row, col_idx, "", unlocked_arial_fmt)
+            else:
+                ws.write(excel_row, col_idx, "", unlocked_fmt)
 
     last_val_row = num_rows + extra_rows
 
+    # ── Data validation ───────────────────────────────────────────────────────
     ws.data_validation(1, 8, last_val_row, 8, {
         "validate": "list", "source": statuses,
-        "input_title": "الحالة", "input_message": "اختاري الحالة المناسبة",
+        "show_input": True, "show_error": True,
     })
     ws.data_validation(1, 9, last_val_row, 9, {
         "validate": "list", "source": days,
-        "input_title": "يوم الاختبار", "input_message": "اختاري اليوم",
+        "show_input": True, "show_error": True,
     })
     ws.data_validation(1, 11, last_val_row, 11, {
         "validate": "list", "source": periods,
-        "input_title": "الفترة", "input_message": "اختاري الفترة",
+        "show_input": True, "show_error": True,
     })
 
+    # ── Sheet protection ──────────────────────────────────────────────────────
     ws.protect("", {
-        "sheet": True, "insert_rows": True, "insert_columns": False,
-        "delete_rows": False, "sort": False, "autofilter": False,
-        "select_locked_cells": True, "select_unlocked_cells": True,
+        "sheet": True,
+        "objects": True,
+        "scenarios": True,
+        "insert_rows": True,
+        "insert_columns": False,
+        "delete_rows": False,
+        "sort": False,
+        "autofilter": False,
+        "select_locked_cells": True,
+        "select_unlocked_cells": True,
     })
 
     workbook.close()
