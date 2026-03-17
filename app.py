@@ -434,22 +434,3 @@ st.markdown("""
 """, unsafe_allow_html=True)
 ```
 
----
-
-## 📄 الملف الثاني: `requirements.txt`
-```
-streamlit>=1.32.0
-pandas>=2.0.0
-xlsxwriter>=3.1.0
-openpyxl>=3.1.0
-```
-
----
-
-## 🗂️ هيكل المستودع على GitHub
-
-يجب أن يكون المستودع هكذا بالضبط:
-```
-your-repo/
-├── app.py
-└── requirements.txt
