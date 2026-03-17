@@ -196,11 +196,10 @@ def read_xlsx_raw(file_bytes):
         return pd.DataFrame(matrix[1:], columns=headers)
 
 
-def get_short_name(full_name):
+def get_first_name(full_name):
+    """إيمان زياد الحموي → إيمان"""
     parts = str(full_name).strip().split()
-    if len(parts) >= 2:
-        return parts[0] + "." + parts[1][0]
-    return parts[0] if parts else full_name
+    return parts[0] if parts else str(full_name)
 
 
 def parse_list(text):
@@ -384,7 +383,10 @@ def process_files(uploaded_files, days, periods, statuses):
             teacher_col = next((c for c in df.columns if "المعلمة" in str(c)), None)
             if teacher_col and not df[teacher_col].dropna().empty:
                 raw_name = str(df[teacher_col].dropna().iloc[0]).strip()
-                short = get_short_name(raw_name)
+                first_name = get_first_name(raw_name)
+                # Write only first name in the المعلمة column
+                df[teacher_col] = first_name
+                short = first_name
             else:
                 short = uf.name.rsplit(".", 1)[0]
 
@@ -426,7 +428,7 @@ with st.sidebar:
     )
     periods_text = st.text_area(
         "⏰ الفترات",
-        value="فجراً من 5.45-9.00\nضحى 9:15-12.30\nظهراً 12:45-4.15\nعصراً 4.30-7.00\nليلاً 7.15-9.30",
+        value="فجراً\nضحى\nظهراً\nعصراً\nليلاً",
         height=140,
         help="كل فترة في سطر منفصل",
     )
