@@ -4,6 +4,203 @@ import io
 import zipfile
 import xlsxwriter
 import xml.etree.ElementTree as ET
+import sqlite3
+import datetime
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# طبقة قاعدة البيانات — SQLite
+# ═══════════════════════════════════════════════════════════════════════════════
+DB_PATH = "maqraa_memory.db"
+
+def get_db():
+    """فتح اتصال بقاعدة البيانات وإنشاء الجداول إذا لم تكن موجودة"""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+
+    # جدول أسماء المعلمات
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS teachers (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            full_name     TEXT UNIQUE NOT NULL,
+            display_name  TEXT NOT NULL,
+            updated_at    TEXT NOT NULL
+        )
+    """)
+
+    # جدول سجل العمليات
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS operations_log (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            stage         INTEGER NOT NULL,
+            session_label TEXT,
+            file_count    INTEGER NOT NULL,
+            file_names    TEXT,
+            processed_at  TEXT NOT NULL
+        )
+    """)
+
+    # جدول الملفات المحفوظة
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS saved_files (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_date  TEXT NOT NULL,
+            file_type     TEXT NOT NULL,
+            teacher_name  TEXT NOT NULL,
+            file_name     TEXT NOT NULL,
+            file_bytes    BLOB NOT NULL,
+            saved_at      TEXT NOT NULL
+        )
+    """)
+    # file_type: 'raw' للخام الأصلية، 'stage1' للمرحلة الأولى، 'stage2' للمرحلة الثانية
+
+    conn.commit()
+    return conn
+
+
+def db_save_teacher(full_name, display_name):
+    """حفظ أو تحديث اسم معلمة"""
+    conn = get_db()
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    conn.execute("""
+        INSERT INTO teachers (full_name, display_name, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(full_name) DO UPDATE SET
+            display_name = excluded.display_name,
+            updated_at   = excluded.updated_at
+    """, (full_name, display_name, now))
+    conn.commit()
+    conn.close()
+
+
+def db_load_teachers():
+    """تحميل كل أسماء المعلمات المحفوظة → dict {full_name: display_name}"""
+    conn = get_db()
+    rows = conn.execute("SELECT full_name, display_name FROM teachers ORDER BY full_name").fetchall()
+    conn.close()
+    return {r["full_name"]: r["display_name"] for r in rows}
+
+
+def db_log_operation(stage, file_count, file_names, session_label=""):
+    """تسجيل عملية معالجة"""
+    conn = get_db()
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    conn.execute("""
+        INSERT INTO operations_log (stage, session_label, file_count, file_names, processed_at)
+        VALUES (?, ?, ?, ?, ?)
+    """, (stage, session_label, file_count, ", ".join(file_names), now))
+    conn.commit()
+    conn.close()
+
+
+def db_save_files(session_date, file_type, files_dict):
+    """
+    حفظ الملفات في قاعدة البيانات
+    session_date: "2026-03-18"
+    file_type: "raw" | "stage1" | "stage2"
+    files_dict: {filename: bytes}
+    """
+    conn = get_db()
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    for fname, fbytes in files_dict.items():
+        # استخرج اسم المعلمة من اسم الملف (بدون الامتداد)
+        teacher = fname.rsplit(".", 1)[0]
+        conn.execute("""
+            INSERT INTO saved_files
+                (session_date, file_type, teacher_name, file_name, file_bytes, saved_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (session_date, file_type, teacher, fname, fbytes, now))
+    conn.commit()
+    conn.close()
+
+
+def db_get_sessions():
+    """
+    جلب التواريخ المحفوظة مع أنواع الملفات وعددها
+    يُعيد: [{session_date, file_type, file_count, saved_at}]
+    """
+    conn = get_db()
+    rows = conn.execute("""
+        SELECT session_date, file_type,
+               COUNT(*) as file_count,
+               MAX(saved_at) as saved_at
+        FROM saved_files
+        GROUP BY session_date, file_type
+        ORDER BY saved_at DESC
+    """).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def db_get_teachers_in_session(session_date, file_type):
+    """جلب أسماء المعلمات داخل تاريخ وفئة محددة"""
+    conn = get_db()
+    rows = conn.execute("""
+        SELECT teacher_name, file_name, saved_at
+        FROM saved_files
+        WHERE session_date = ? AND file_type = ?
+        ORDER BY teacher_name
+    """, (session_date, file_type)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def db_load_one_file(session_date, file_type, teacher_name):
+    """تحميل ملف معلمة واحدة"""
+    conn = get_db()
+    row = conn.execute("""
+        SELECT file_name, file_bytes FROM saved_files
+        WHERE session_date=? AND file_type=? AND teacher_name=?
+    """, (session_date, file_type, teacher_name)).fetchone()
+    conn.close()
+    if row:
+        return row["file_name"], bytes(row["file_bytes"])
+    return None, None
+
+
+def db_load_session_files(session_date, file_type):
+    """تحميل كل ملفات جلسة دفعة واحدة {fname: bytes}"""
+    conn = get_db()
+    rows = conn.execute("""
+        SELECT file_name, file_bytes FROM saved_files
+        WHERE session_date=? AND file_type=?
+        ORDER BY teacher_name
+    """, (session_date, file_type)).fetchall()
+    conn.close()
+    return {r["file_name"]: bytes(r["file_bytes"]) for r in rows}
+
+
+def db_delete_session(session_date, file_type):
+    """حذف جلسة محفوظة"""
+    conn = get_db()
+    conn.execute("DELETE FROM saved_files WHERE session_date=? AND file_type=?",
+                 (session_date, file_type))
+    conn.commit()
+    conn.close()
+
+
+def db_get_log(limit=50):
+    """جلب آخر العمليات"""
+    conn = get_db()
+    rows = conn.execute("""
+        SELECT stage, file_count, file_names, processed_at
+        FROM operations_log
+        ORDER BY id DESC
+        LIMIT ?
+    """, (limit,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def db_delete_teacher(full_name):
+    """حذف معلمة من قاعدة البيانات"""
+    conn = get_db()
+    conn.execute("DELETE FROM teachers WHERE full_name = ?", (full_name,))
+    conn.commit()
+    conn.close()
+
 
 st.set_page_config(
     page_title="أداة مقرأة",
@@ -771,15 +968,23 @@ if uploaded_files:
         )
 
         edited_map = {}
+        saved_names = db_load_teachers()   # الأسماء المحفوظة من جلسات سابقة
+
         cols_h = st.columns([3, 2, 2])
         cols_h[0].markdown("**الاسم الكامل في الملف**")
         cols_h[1].markdown("**الاسم المقترح**")
         cols_h[2].markdown("**الاسم النهائي** (عدّلي هنا)")
 
         for i, (full_name, suggested) in enumerate(preview_map.items()):
+            # إذا كان الاسم محفوظاً من قبل → استخدمه كقيمة افتراضية
+            default_val = saved_names.get(full_name, suggested)
+            is_saved = full_name in saved_names
+
             c1, c2, c3 = st.columns([3, 2, 2])
+            label_suffix = " 💾" if is_saved else ""
             c1.markdown(
-                "<div style='direction:rtl;padding-top:8px;font-size:0.9rem;'>" + full_name + "</div>",
+                "<div style='direction:rtl;padding-top:8px;font-size:0.9rem;'>"
+                + full_name + label_suffix + "</div>",
                 unsafe_allow_html=True,
             )
             c2.markdown(
@@ -789,11 +994,11 @@ if uploaded_files:
             )
             final = c3.text_input(
                 "final_" + str(i),
-                value=suggested,
+                value=default_val,
                 label_visibility="collapsed",
                 key="teacher_edit_" + str(i),
             )
-            edited_map[full_name] = final.strip() if final.strip() else suggested
+            edited_map[full_name] = final.strip() if final.strip() else default_val
 
         st.markdown("<br>", unsafe_allow_html=True)
 
@@ -803,8 +1008,25 @@ if uploaded_files:
                 results, errors = process_files_from_cache(
                     file_bytes_cache, days_list, periods_list, statuses_list, edited_map
                 )
-            st.session_state["stage1_results"] = results
-            st.session_state["stage1_errors"]  = errors
+            # حفظ الأسماء المعتمدة في قاعدة البيانات
+            for full_n, disp_n in edited_map.items():
+                db_save_teacher(full_n, disp_n)
+            # تسجيل العملية وحفظ الملفات
+            today = datetime.datetime.now().strftime("%Y-%m-%d")
+            session_lbl = datetime.datetime.now().strftime("دورة %Y-%m-%d %H:%M")
+            db_log_operation(1, len(results), list(results.keys()), session_lbl)
+            # حفظ الملفات الخام الأصلية
+            raw_for_db = {}
+            for fn, fb in file_bytes_cache.items():
+                raw_for_db[fn] = fb
+            if raw_for_db:
+                db_save_files(today, "raw", raw_for_db)
+            # حفظ الملفات المعالجة (المرحلة الأولى)
+            if results:
+                db_save_files(today, "stage1", results)
+            st.session_state["stage1_results"]  = results
+            st.session_state["stage1_errors"]   = errors
+            st.session_state["last_session_date"] = today
 
     # ── عرض النتائج ──────────────────────────────────────────────────────────
     if st.session_state.get("stage1_results"):
@@ -1410,6 +1632,149 @@ if uploaded_stage2:
                 use_container_width=True,
                 key="stage2_download",
             )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# الذاكرة التاريخية
+# ═══════════════════════════════════════════════════════════════════════════════
+st.markdown("<br>", unsafe_allow_html=True)
+st.markdown(
+    """
+    <div style="background:linear-gradient(135deg,#2d1b4e,#4a2880);border-radius:16px;
+    padding:1.5rem 2.5rem;margin-bottom:1.5rem;box-shadow:0 8px 32px rgba(45,27,78,0.3);
+    text-align:center;color:white;">
+        <div style="font-size:1.6rem;font-weight:900;">🧠 الذاكرة التاريخية</div>
+        <div style="font-size:0.9rem;margin-top:0.3rem;opacity:0.85;">أسماء المعلمات المحفوظة وسجل العمليات</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+mem_tab1, mem_tab2, mem_tab3 = st.tabs(["📁 الملفات المحفوظة", "👩‍🏫 أسماء المعلمات", "📋 سجل العمليات"])
+
+with mem_tab1:
+    sessions = db_get_sessions()
+    if not sessions:
+        st.info("لا توجد ملفات محفوظة بعد — ستُحفظ تلقائياً بعد كل عملية معالجة.")
+    else:
+        # تجميع الجلسات حسب التاريخ
+        from collections import defaultdict
+        by_date = defaultdict(list)
+        for s in sessions:
+            by_date[s["session_date"]].append(s)
+
+        TYPE_LABELS = {
+            "raw":    "📄 الملفات الخام الأصلية",
+            "stage1": "✅ جداول المعلمات (مرحلة 1)",
+            "stage2": "🔄 ملفات المراجعة (مرحلة 2)",
+        }
+
+        for date_key in sorted(by_date.keys(), reverse=True):
+            with st.expander("📅 " + date_key + "  —  " +
+                             str(sum(s["file_count"] for s in by_date[date_key])) + " ملف",
+                             expanded=False):
+
+                for s in by_date[date_key]:
+                    ftype   = s["file_type"]
+                    f_label = TYPE_LABELS.get(ftype, ftype)
+                    st.markdown(
+                        "<div style='font-weight:700;font-size:0.95rem;"
+                        "color:#3d2060;margin:0.6rem 0 0.3rem;direction:rtl;'>"
+                        + f_label + " — " + str(s["file_count"]) + " ملف</div>",
+                        unsafe_allow_html=True,
+                    )
+
+                    # أسماء المعلمات داخل هذه الجلسة
+                    teachers_in = db_get_teachers_in_session(date_key, ftype)
+                    chips_html  = " ".join(
+                        '<span class="file-chip">' + t["teacher_name"] + '</span>'
+                        for t in teachers_in
+                    )
+                    st.markdown(chips_html, unsafe_allow_html=True)
+
+                    c1, c2, c3 = st.columns([2, 2, 1])
+
+                    # تحميل ملف معلمة واحدة
+                    teacher_names = [t["teacher_name"] for t in teachers_in]
+                    sel_key = "sel_" + date_key + "_" + ftype
+                    selected_t = c1.selectbox(
+                        "معلمة واحدة",
+                        options=["— الكل —"] + teacher_names,
+                        key=sel_key,
+                        label_visibility="collapsed",
+                    )
+
+                    dl_one_key = "dlo_" + date_key + "_" + ftype
+                    if c2.button("⬇️ تحميل المحدد", key=dl_one_key, use_container_width=True):
+                        if selected_t == "— الكل —":
+                            cached = db_load_session_files(date_key, ftype)
+                            zb = io.BytesIO()
+                            with zipfile.ZipFile(zb, "w", zipfile.ZIP_DEFLATED) as zf:
+                                for fn, fb in cached.items():
+                                    zf.writestr(fn, fb)
+                            zb.seek(0)
+                            st.download_button(
+                                "📦 تحميل الكل — " + date_key,
+                                data=zb,
+                                file_name=date_key + "_" + ftype + ".zip",
+                                mime="application/zip",
+                                key="zdl_" + date_key + "_" + ftype,
+                            )
+                        else:
+                            fn, fb = db_load_one_file(date_key, ftype, selected_t)
+                            if fb:
+                                st.download_button(
+                                    "📄 " + fn,
+                                    data=fb,
+                                    file_name=fn,
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    key="fdl_" + date_key + "_" + ftype + "_" + selected_t,
+                                )
+
+                    del_key = "del_" + date_key + "_" + ftype
+                    if c3.button("🗑️", key=del_key, use_container_width=True, help="حذف هذه الفئة"):
+                        db_delete_session(date_key, ftype)
+                        st.rerun()
+
+with mem_tab2:
+    saved = db_load_teachers()
+    if saved:
+        st.markdown(
+            "<div style='font-size:0.85rem;color:#666;margin-bottom:0.8rem;direction:rtl;'>"
+            "الأسماء المحفوظة من جلسات سابقة — تظهر تلقائياً كقيم افتراضية عند رفع ملفات جديدة."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        df_saved = pd.DataFrame(
+            [{"الاسم الكامل": k, "الاسم المختصر": v} for k, v in saved.items()]
+        )
+        st.dataframe(df_saved, use_container_width=True, hide_index=True)
+
+        with st.expander("🗑️ حذف معلمة من الذاكرة"):
+            to_delete = st.selectbox(
+                "اختاري الاسم للحذف",
+                options=list(saved.keys()),
+                key="delete_teacher_select",
+            )
+            if st.button("حذف", key="delete_teacher_btn"):
+                db_delete_teacher(to_delete)
+                st.success("✅ تم الحذف")
+                st.rerun()
+    else:
+        st.info("لا توجد أسماء محفوظة بعد — ستُحفظ تلقائياً عند أول معالجة.")
+
+with mem_tab3:
+    log = db_get_log(50)
+    if log:
+        df_log = pd.DataFrame([{
+            "المرحلة":    "المرحلة " + str(r["stage"]),
+            "عدد الملفات": r["file_count"],
+            "الملفات":    r["file_names"],
+            "التاريخ":    r["processed_at"],
+        } for r in log])
+        st.dataframe(df_log, use_container_width=True, hide_index=True)
+    else:
+        st.info("لا يوجد سجل بعد — يُسجَّل تلقائياً عند كل عملية معالجة.")
 
 st.markdown(
     """
