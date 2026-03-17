@@ -130,6 +130,14 @@ h1, h2, h3 { font-family: 'Tajawal', sans-serif !important; }
     font-size: 0.9rem !important;
 }
 
+[data-testid="stSidebar"] .sidebar-section {
+    background: rgba(255,255,255,0.07);
+    border-radius: 10px;
+    padding: 0.8rem 1rem;
+    margin-bottom: 1rem;
+    border: 1px solid rgba(168,216,120,0.2);
+}
+
 .stButton > button {
     font-family: 'Tajawal', sans-serif !important;
     font-weight: 700 !important;
@@ -162,6 +170,8 @@ h1, h2, h3 { font-family: 'Tajawal', sans-serif !important; }
     text-align: center;
     margin: 1rem 0;
 }
+
+.preview-table { direction: rtl; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -187,23 +197,28 @@ def build_excel(df: pd.DataFrame, days: list, periods: list, statuses: list) -> 
                      "البلد", "المواليد", "الإجازة", "المعلمة",
                      "الحالة", "يوم الاختبار", "توقيت الاختبار", "الفترة", "الملاحظات"]
 
+    # Keep only existing source columns; add missing ones as empty
+    source_cols = ["الرقم", "الاسم", "رقم الواتس اب", "المجموعة",
+                   "البلد", "المواليد", "الإجازة", "المعلمة"]
     for col in columns_order:
         if col not in df.columns:
             df[col] = ""
 
     df = df[columns_order]
     num_rows = len(df)
-    extra_rows = 50
+    extra_rows = 50  # extra blank rows for new students
 
     workbook = xlsxwriter.Workbook(output, {"in_memory": True})
     ws = workbook.add_worksheet("الطالبات")
     ws.right_to_left()
 
+    # ── Formats ──────────────────────────────────────────────────────────────
     header_fmt = workbook.add_format({
         "bold": True, "font_name": "Tajawal", "font_size": 11,
         "align": "center", "valign": "vcenter",
         "fg_color": "#2d5016", "font_color": "white",
-        "border": 1, "text_wrap": True, "locked": True,
+        "border": 1, "text_wrap": True,
+        "locked": True,
     })
 
     locked_fmt = workbook.add_format({
@@ -223,15 +238,18 @@ def build_excel(df: pd.DataFrame, days: list, periods: list, statuses: list) -> 
         "locked": False, "bg_color": "#fff9e6",
     })
 
+    # ── Column Widths ─────────────────────────────────────────────────────────
     col_widths = [8, 28, 18, 16, 12, 12, 12, 20, 22, 18, 18, 18, 25]
     for i, w in enumerate(col_widths):
         ws.set_column(i, i, w)
 
     ws.set_row(0, 30)
 
+    # ── Headers ───────────────────────────────────────────────────────────────
     for col_idx, col_name in enumerate(columns_order):
         ws.write(0, col_idx, col_name, header_fmt)
 
+    # ── Data Rows ─────────────────────────────────────────────────────────────
     for row_idx, row in df.iterrows():
         excel_row = row_idx + 1
         ws.set_row(excel_row, 20)
@@ -241,6 +259,7 @@ def build_excel(df: pd.DataFrame, days: list, periods: list, statuses: list) -> 
             fmt = locked_fmt if col_idx < 8 else unlocked_fmt
             ws.write(excel_row, col_idx, val, fmt)
 
+    # ── Extra blank rows ──────────────────────────────────────────────────────
     for extra in range(extra_rows):
         excel_row = num_rows + 1 + extra
         ws.set_row(excel_row, 20)
@@ -248,27 +267,43 @@ def build_excel(df: pd.DataFrame, days: list, periods: list, statuses: list) -> 
             fmt = locked_fmt if col_idx < 8 else unlocked_extra_fmt
             ws.write(excel_row, col_idx, "", fmt)
 
-    last_val_row = num_rows + extra_rows
+    # ── Data Validation ───────────────────────────────────────────────────────
+    last_val_row = num_rows + extra_rows  # 1-indexed last row
 
+    # Col I (index 8) → الحالة
     ws.data_validation(1, 8, last_val_row, 8, {
-        "validate": "list", "source": statuses,
-        "input_title": "الحالة", "input_message": "اختاري الحالة المناسبة",
+        "validate": "list",
+        "source": statuses,
+        "input_title": "الحالة",
+        "input_message": "اختاري الحالة المناسبة",
     })
 
+    # Col J (index 9) → يوم الاختبار
     ws.data_validation(1, 9, last_val_row, 9, {
-        "validate": "list", "source": days,
-        "input_title": "يوم الاختبار", "input_message": "اختاري اليوم",
+        "validate": "list",
+        "source": days,
+        "input_title": "يوم الاختبار",
+        "input_message": "اختاري اليوم",
     })
 
+    # Col L (index 11) → الفترة
     ws.data_validation(1, 11, last_val_row, 11, {
-        "validate": "list", "source": periods,
-        "input_title": "الفترة", "input_message": "اختاري الفترة",
+        "validate": "list",
+        "source": periods,
+        "input_title": "الفترة",
+        "input_message": "اختاري الفترة",
     })
 
+    # ── Sheet Protection ──────────────────────────────────────────────────────
     ws.protect("", {
-        "sheet": True, "insert_rows": True, "insert_columns": False,
-        "delete_rows": False, "sort": False, "autofilter": False,
-        "select_locked_cells": True, "select_unlocked_cells": True,
+        "sheet": True,
+        "insert_rows": True,
+        "insert_columns": False,
+        "delete_rows": False,
+        "sort": False,
+        "autofilter": False,
+        "select_locked_cells": True,
+        "select_unlocked_cells": True,
     })
 
     workbook.close()
@@ -288,6 +323,7 @@ def process_files(uploaded_files, days, periods, statuses):
             else:
                 df = pd.read_excel(uf)
 
+            # Extract teacher name
             teacher_col = next((c for c in df.columns if "المعلمة" in str(c)), None)
             if teacher_col and not df[teacher_col].dropna().empty:
                 raw_name = str(df[teacher_col].dropna().iloc[0]).strip()
@@ -298,6 +334,7 @@ def process_files(uploaded_files, days, periods, statuses):
             xlsx_bytes = build_excel(df.copy(), days, periods, statuses)
             out_name = f"{short}.xlsx"
 
+            # Handle duplicate names
             base = out_name
             counter = 1
             while out_name in results:
@@ -364,6 +401,7 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+# ── Upload Section ──────────────────────────────────────────────────────────
 st.markdown('<div class="section-title">📂 رفع الملفات</div>', unsafe_allow_html=True)
 
 uploaded_files = st.file_uploader(
@@ -384,9 +422,11 @@ if uploaded_files:
     with cols[3]:
         st.markdown(f'<div class="stat-card"><div class="number">{len(statuses_list)}</div><div class="label">حالة في القائمة</div></div>', unsafe_allow_html=True)
 
+    # File chips
     chips = " ".join([f'<span class="file-chip">📄 {f.name}</span>' for f in uploaded_files])
     st.markdown(f"<div style='margin:0.5rem 0 1.5rem'>{chips}</div>", unsafe_allow_html=True)
 
+    # Process button
     if st.button("⚡ معالجة الملفات وتوليد جداول المعلمات", type="primary", use_container_width=True):
         with st.spinner("جارٍ المعالجة..."):
             results, errors = process_files(uploaded_files, days_list, periods_list, statuses_list)
@@ -398,10 +438,12 @@ if uploaded_files:
         if results:
             st.markdown(f'<div class="success-banner">✅ تمت معالجة {len(results)} ملف بنجاح!</div>', unsafe_allow_html=True)
 
+            # Preview
             st.markdown('<div class="section-title">👁️ معاينة الملفات الناتجة</div>', unsafe_allow_html=True)
             preview_data = [{"اسم الملف الناتج": fname, "الحالة": "✅ جاهز"} for fname in results]
             st.dataframe(pd.DataFrame(preview_data), use_container_width=True, hide_index=True)
 
+            # Build ZIP
             zip_buffer = io.BytesIO()
             with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
                 for fname, fbytes in results.items():
@@ -426,11 +468,10 @@ else:
     </div>
     """, unsafe_allow_html=True)
 
+# ── Footer ──────────────────────────────────────────────────────────────────
 st.markdown("""
 <hr style="margin:2rem 0 1rem; border-color:#d0e8c0;">
 <div style="text-align:center; color:#999; font-size:0.8rem; font-family:'Tajawal',sans-serif;">
     أداة مقرأة — مبنية بـ Python & Streamlit &nbsp;|&nbsp; 📖
 </div>
 """, unsafe_allow_html=True)
-```
-
