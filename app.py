@@ -196,10 +196,17 @@ def read_xlsx_raw(file_bytes):
         return pd.DataFrame(matrix[1:], columns=headers)
 
 
-def get_first_name(full_name):
-    """إيمان زياد الحموي → إيمان"""
-    parts = str(full_name).strip().split()
-    return parts[0] if parts else str(full_name)
+def get_teacher_name(full_name):
+    """مثال: ابتسام خالد سمونة → ابتسام سمونة"""
+    name_str = str(full_name).strip()
+    parts = name_str.split()
+    
+    if len(parts) > 1:
+        # دمج الكلمة الأولى (الاسم) مع الكلمة الأخيرة (الكنية)
+        return f"{parts[0]} {parts[-1]}"
+    
+    # في حال كان الاسم المدخل كلمة واحدة فقط
+    return parts[0] if parts else name_str
 
 
 def parse_list(text):
