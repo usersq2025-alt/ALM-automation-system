@@ -3,6 +3,7 @@ import pandas as pd
 import io
 import zipfile
 import xlsxwriter
+import xml.etree.ElementTree as ET
 
 st.set_page_config(
     page_title="أداة مقرأة",
@@ -23,10 +24,7 @@ st.markdown(
         border-radius: 16px; padding: 2rem 2.5rem; margin-bottom: 2rem;
         box-shadow: 0 8px 32px rgba(45,80,22,0.25); text-align: center; color: white;
     }
-    .hero-header h1 {
-        font-size: 2.4rem; font-weight: 900; margin: 0;
-        text-shadow: 0 2px 4px rgba(0,0,0,0.2);
-    }
+    .hero-header h1 { font-size: 2.4rem; font-weight: 900; margin: 0; text-shadow: 0 2px 4px rgba(0,0,0,0.2); }
     .hero-header p { font-size: 1.05rem; margin: 0.5rem 0 0; opacity: 0.88; font-weight: 300; }
     .stat-card {
         background: white; border-radius: 12px; padding: 1.2rem 1.5rem;
@@ -48,9 +46,7 @@ st.markdown(
         font-size: 1.1rem; font-weight: 700; color: #2d5016;
         border-bottom: 2px solid #a8d878; padding-bottom: 6px; margin: 1.5rem 0 1rem;
     }
-    [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #1a3a08 0%, #2d5016 100%) !important;
-    }
+    [data-testid="stSidebar"] { background: linear-gradient(180deg, #1a3a08 0%, #2d5016 100%) !important; }
     [data-testid="stSidebar"] * { color: #d8f0b8 !important; }
     [data-testid="stSidebar"] .stTextArea textarea {
         background: rgba(255,255,255,0.1) !important;
@@ -60,10 +56,7 @@ st.markdown(
         direction: rtl;
     }
     [data-testid="stSidebar"] label { font-weight: 600 !important; font-size: 0.9rem !important; }
-    .stButton > button {
-        font-family: 'Tajawal', sans-serif !important;
-        font-weight: 700 !important; border-radius: 10px !important;
-    }
+    .stButton > button { font-family: 'Tajawal', sans-serif !important; font-weight: 700 !important; border-radius: 10px !important; }
     .stButton > button[kind="primary"] {
         background: linear-gradient(135deg, #2d5016, #4a7c28) !important;
         border: none !important; box-shadow: 0 4px 15px rgba(45,80,22,0.3) !important;
@@ -71,9 +64,9 @@ st.markdown(
     .stDownloadButton > button {
         background: linear-gradient(135deg, #1a5276, #2874a6) !important;
         color: white !important; font-family: 'Tajawal', sans-serif !important;
-        font-weight: 700 !important; border: none !important;
-        border-radius: 10px !important; padding: 0.6rem 2rem !important;
-        font-size: 1rem !important; box-shadow: 0 4px 15px rgba(26,82,118,0.3) !important;
+        font-weight: 700 !important; border: none !important; border-radius: 10px !important;
+        padding: 0.6rem 2rem !important; font-size: 1rem !important;
+        box-shadow: 0 4px 15px rgba(26,82,118,0.3) !important;
     }
     .upload-zone {
         background: white; border: 2px dashed #a8d878; border-radius: 16px;
@@ -85,6 +78,76 @@ st.markdown(
 )
 
 
+# ── Raw XML xlsx reader — zero dependency on openpyxl styles ──────────────────
+def read_xlsx_raw(file_bytes):
+    """
+    Opens .xlsx as a ZIP archive and parses sheet XML directly.
+    Never touches openpyxl styles/fills — completely immune to Fill errors.
+    """
+    NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+
+    with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
+        # Load shared strings
+        shared = []
+        if "xl/sharedStrings.xml" in zf.namelist():
+            tree = ET.parse(zf.open("xl/sharedStrings.xml"))
+            for si in tree.getroot().iter("{" + NS + "}si"):
+                texts = [t.text or "" for t in si.iter("{" + NS + "}t")]
+                shared.append("".join(texts))
+
+        # Find first sheet path
+        wb_tree = ET.parse(zf.open("xl/workbook.xml"))
+        rels_tree = ET.parse(zf.open("xl/_rels/workbook.xml.rels"))
+        rels = {
+            r.attrib["Id"]: r.attrib["Target"]
+            for r in rels_tree.getroot()
+        }
+        sheets = wb_tree.getroot().find("{" + NS + "}sheets")
+        first_sheet = sheets[0]
+        r_id = first_sheet.attrib.get(
+            "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+        )
+        sheet_path = "xl/" + rels[r_id].lstrip("/").replace("xl/", "")
+        if not sheet_path.startswith("xl/"):
+            sheet_path = "xl/" + rels[r_id]
+
+        # Parse sheet data
+        sheet_tree = ET.parse(zf.open(sheet_path))
+        rows_data = []
+        for row_el in sheet_tree.getroot().iter("{" + NS + "}row"):
+            row_vals = []
+            for c in row_el.iter("{" + NS + "}c"):
+                v_el = c.find("{" + NS + "}v")
+                t = c.attrib.get("t", "")
+                if v_el is None or v_el.text is None:
+                    row_vals.append("")
+                elif t == "s":
+                    row_vals.append(shared[int(v_el.text)])
+                elif t == "b":
+                    row_vals.append(bool(int(v_el.text)))
+                else:
+                    val = v_el.text
+                    try:
+                        val = int(val) if "." not in val else float(val)
+                    except (ValueError, TypeError):
+                        pass
+                    row_vals.append(val)
+            rows_data.append(row_vals)
+
+    if not rows_data:
+        raise ValueError("الملف فارغ")
+
+    # Normalize row lengths
+    max_len = max(len(r) for r in rows_data)
+    for r in rows_data:
+        while len(r) < max_len:
+            r.append("")
+
+    headers = [str(c) if c != "" else "col_" + str(i) for i, c in enumerate(rows_data[0])]
+    return pd.DataFrame(rows_data[1:], columns=headers)
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
 def get_short_name(full_name):
     parts = str(full_name).strip().split()
     if len(parts) >= 2:
@@ -195,23 +258,15 @@ def process_files(uploaded_files, days, periods, statuses):
     for uf in uploaded_files:
         try:
             file_bytes = uf.read()
+            name_lower = uf.name.lower()
 
-            if uf.name.lower().endswith(".csv"):
+            if name_lower.endswith(".csv"):
                 df = pd.read_csv(io.BytesIO(file_bytes))
-            elif uf.name.lower().endswith(".xls"):
+            elif name_lower.endswith(".xls"):
                 df = pd.read_excel(io.BytesIO(file_bytes), engine="xlrd")
             else:
-                # .xlsx — read data only, ignore all styles to avoid Fill errors
-                import openpyxl
-                wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True, read_only=True)
-                ws = wb.active
-                rows = list(ws.iter_rows(values_only=True))
-                wb.close()
-                if not rows:
-                    raise ValueError("الملف فارغ")
-                headers = [str(c) if c is not None else "" for c in rows[0]]
-                data = [list(r) for r in rows[1:]]
-                df = pd.DataFrame(data, columns=headers)
+                # .xlsx — use raw XML reader, zero openpyxl style dependency
+                df = read_xlsx_raw(file_bytes)
 
             teacher_col = next((c for c in df.columns if "المعلمة" in str(c)), None)
             if teacher_col and not df[teacher_col].dropna().empty:
@@ -236,7 +291,7 @@ def process_files(uploaded_files, days, periods, statuses):
     return results, errors
 
 
-# ── Sidebar ────────────────────────────────────────────────────────────────────
+# ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown(
         """
@@ -283,7 +338,7 @@ with st.sidebar:
     )
 
 
-# ── Main ───────────────────────────────────────────────────────────────────────
+# ── Main ──────────────────────────────────────────────────────────────────────
 st.markdown(
     """
     <div class="hero-header">
