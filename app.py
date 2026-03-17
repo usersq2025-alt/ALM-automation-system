@@ -602,6 +602,423 @@ else:
         unsafe_allow_html=True,
     )
 
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# المرحلة الثانية — معالجة ملفات المعلمات المُعادة
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def parse_time_to_minutes(time_str):
+    """تحويل نص الوقت (8:30 أو 8.30) إلى دقائق منذ منتصف الليل"""
+    s = str(time_str).strip().replace(".", ":").replace("٫", ":")
+    parts = s.split(":")
+    try:
+        h = int(parts[0])
+        m = int(parts[1]) if len(parts) > 1 else 0
+        return h * 60 + m
+    except Exception:
+        return None
+
+
+def get_period_from_time(minutes, period_schedule):
+    """
+    period_schedule: list of (period_name, start_min, end_min)
+    يرجع اسم الفترة المناسبة للوقت، أو None
+    """
+    if minutes is None:
+        return None
+    for name, start, end in period_schedule:
+        if start <= minutes <= end:
+            return name
+    return None
+
+
+def format_time(time_str):
+    """تنسيق الوقت: 8.30 / 8:30 / 830 → 8:30"""
+    s = str(time_str).strip()
+    if not s:
+        return ""
+    s = s.replace(".", ":").replace("٫", ":")
+    if ":" not in s:
+        if len(s) <= 2:
+            return s + ":00"
+        s = s[:-2] + ":" + s[-2:]
+    parts = s.split(":")
+    try:
+        h = int(parts[0])
+        m = int(parts[1]) if len(parts) > 1 else 0
+        return f"{h}:{m:02d}"
+    except Exception:
+        return str(time_str)
+
+
+# جدول الفترات الثابت (من الصورة المرفقة)
+PERIOD_SCHEDULE = [
+    ("فجراً",  5*60+45,  9*60+0),
+    ("ضحى",    9*60+15, 12*60+30),
+    ("ظهراً", 12*60+45, 16*60+15),
+    ("عصراً", 16*60+30, 19*60+0),
+    ("ليلاً", 19*60+15, 21*60+30),
+]
+
+KEYWORD_RED   = "شرطي"
+COLOR_RED     = "#FF9999"   # أحمر فاتح — شرطي
+COLOR_ORANGE  = "#FFD580"   # برتقالي — ملاحظات جوهرية
+COLOR_YELLOW  = "#FFFF99"   # أصفر — تعارض فترة/وقت
+COLOR_HEADER  = "#D9D9D9"   # رمادي فاتح للهيدر
+
+NOTES_KEYWORDS = ["تغيير رقم", "تعديل مواليد", "تعديل اسم", "تغيير اسم",
+                  "تصحيح رقم", "تصحيح اسم", "تصحيح مواليد"]
+
+
+def analyze_day_distribution(students_df, days_list, day_col, status_col):
+    """
+    يحلل توزيع الطالبات على الأيام ويُنتج تقريراً يوضح:
+    - عدد الطالبات الكلي اللواتي أنهين المقرر
+    - الحصة المثالية لكل يوم
+    - الأيام التي فيها ضغط (أكثر من الحصة) أو فراغ (أقل من الحصة)
+    - الطالبات غير الموزعات (بدون يوم)
+    يُعيد: dict يحتوي على ملخص التقرير
+    """
+    finished_mask = students_df[status_col].astype(str).str.strip() == "أنهت المقرر"
+    finished_df   = students_df[finished_mask]
+    total         = len(finished_df)
+
+    if total == 0 or not days_list:
+        return {"total": 0, "days": {}, "unassigned": 0, "has_issue": False, "ideal": 0}
+
+    d           = len(days_list)
+    base, extra = divmod(total, d)
+
+    # الحصة المثالية لكل يوم
+    ideal = {}
+    for i, day in enumerate(days_list):
+        ideal[day] = base + (1 if i < extra else 0)
+
+    # العدد الفعلي لكل يوم
+    actual = {day: 0 for day in days_list}
+    unassigned = 0
+    for _, row in finished_df.iterrows():
+        day_val = str(row[day_col]).strip()
+        if day_val in ("", "nan"):
+            unassigned += 1
+        else:
+            matched = False
+            for day in days_list:
+                if day_val in day or day in day_val:
+                    actual[day] = actual.get(day, 0) + 1
+                    matched = True
+                    break
+            if not matched:
+                unassigned += 1
+
+    # بناء تقرير لكل يوم
+    days_report = {}
+    has_issue   = False
+    for day in days_list:
+        a = actual.get(day, 0)
+        i = ideal.get(day, 0)
+        status = "✅ مناسب"
+        if a > i:
+            status = "🔴 ضغط — يجب تحويل " + str(a - i) + " طالبة"
+            has_issue = True
+        elif a < i and unassigned > 0:
+            status = "🟢 متاح — يستوعب " + str(i - a) + " طالبة إضافية"
+        days_report[day] = {"actual": a, "ideal": i, "status": status}
+
+    return {
+        "total":      total,
+        "days":       days_report,
+        "unassigned": unassigned,
+        "has_issue":  has_issue,
+        "ideal_base": base,
+        "ideal_extra": extra,
+    }
+
+
+def process_stage2_file(file_bytes, days_list):
+    """معالجة ملف واحد مُعاد من المعلمة"""
+    import xlsxwriter
+
+    # قراءة البيانات
+    df = read_xlsx_raw(file_bytes)
+
+    # تعريف الأعمدة
+    col_map = {
+        "status":  next((c for c in df.columns if "الحالة"         in str(c)), None),
+        "day":     next((c for c in df.columns if "يوم الاختبار"   in str(c)), None),
+        "time":    next((c for c in df.columns if "توقيت الاختبار" in str(c)), None),
+        "period":  next((c for c in df.columns if "الفترة"         in str(c)), None),
+        "notes":   next((c for c in df.columns if "الملاحظات"      in str(c)), None),
+    }
+
+    columns_order = [
+        "الرقم", "الاسم", "رقم الواتس اب", "المجموعة",
+        "البلد", "المواليد", "الإجازة", "المعلمة",
+        "الحالة", "يوم الاختبار", "توقيت الاختبار", "الفترة", "الملاحظات",
+    ]
+    for col in columns_order:
+        if col not in df.columns:
+            df[col] = ""
+
+    # 1. تحليل توزيع الأيام (بدون تعديل — تقرير فقط)
+    day_report = {}
+    if col_map["status"] and col_map["day"] and days_list:
+        day_report = analyze_day_distribution(df, days_list, col_map["day"], col_map["status"])
+
+    # 2. تنسيق الوقت + تصحيح الفترة
+    time_period_issues = []
+    if col_map["time"] and col_map["period"]:
+        for idx, row in df.iterrows():
+            status_val = str(row.get(col_map["status"], "")).strip()
+            time_val   = str(row.get(col_map["time"],   "")).strip()
+            period_val = str(row.get(col_map["period"], "")).strip()
+
+            # تنظيف عمود الوقت دائماً
+            if time_val and time_val != "nan":
+                df.at[idx, col_map["time"]] = format_time(time_val)
+                mins = parse_time_to_minutes(time_val)
+                correct_period = get_period_from_time(mins, PERIOD_SCHEDULE)
+
+                # تصحيح الفترة إذا كانت خاطئة أو فارغة
+                if correct_period and period_val not in (correct_period, ""):
+                    df.at[idx, col_map["period"]] = correct_period
+                    time_period_issues.append(idx)
+                elif correct_period and not period_val:
+                    df.at[idx, col_map["period"]] = correct_period
+
+    # 3. كشف الصفوف — شرطي / ملاحظات جوهرية
+    red_rows    = []
+    orange_rows = []
+    if col_map["notes"]:
+        for idx, row in df.iterrows():
+            note = str(row.get(col_map["notes"], "")).strip()
+            if KEYWORD_RED in note:
+                red_rows.append(idx)
+            elif any(kw in note for kw in NOTES_KEYWORDS):
+                orange_rows.append(idx)
+
+    # ── بناء Excel ──────────────────────────────────────────────────────────
+    output = io.BytesIO()
+    df = df[columns_order].copy()
+    num_rows = len(df)
+
+    workbook = xlsxwriter.Workbook(output, {"in_memory": True})
+    ws = workbook.add_worksheet("الطالبات")
+    ws.right_to_left()
+
+    # الصيغ
+    def fmt(extra=None):
+        base = {"font_name": "Calibri", "font_size": 11,
+                "align": "center", "valign": "vcenter",
+                "border": 1, "locked": False}
+        if extra:
+            base.update(extra)
+        return workbook.add_format(base)
+
+    header_fmt   = workbook.add_format({"bold": True, "font_name": "Calibri",
+                                        "font_size": 11, "align": "center",
+                                        "valign": "vcenter", "border": 1,
+                                        "bg_color": COLOR_HEADER, "locked": False})
+    normal_fmt   = fmt()
+    num_fmt      = fmt({"num_format": "0"})
+    red_fmt      = fmt({"bg_color": COLOR_RED})
+    red_num_fmt  = fmt({"bg_color": COLOR_RED,   "num_format": "0"})
+    orange_fmt   = fmt({"bg_color": COLOR_ORANGE})
+    orange_num_fmt = fmt({"bg_color": COLOR_ORANGE, "num_format": "0"})
+    yellow_fmt   = fmt({"bg_color": COLOR_YELLOW})
+    arial_fmt    = fmt({"font_name": "Arial"})
+    red_arial    = fmt({"bg_color": COLOR_RED,    "font_name": "Arial"})
+    orange_arial = fmt({"bg_color": COLOR_ORANGE, "font_name": "Arial"})
+
+    col_widths = [7, 24, 14.1, 13.3, 7, 6, 5.3, 6.9, 19.8, 11.4, 10.7, 14, 39.8]
+    for i, w in enumerate(col_widths):
+        ws.set_column(i, i, w)
+
+    # هيدر
+    for ci, cn in enumerate(columns_order):
+        ws.write(0, ci, cn, header_fmt)
+
+    numeric_cols = {"الرقم", "رقم الواتس اب", "المواليد"}
+
+    for row_idx, row in df.iterrows():
+        er = row_idx + 1
+        is_red    = row_idx in red_rows
+        is_orange = row_idx in orange_rows
+        is_yellow = row_idx in time_period_issues
+
+        for ci, cn in enumerate(columns_order):
+            val = row[cn]
+            val = "" if pd.isna(val) else val
+
+            # تحديد الصيغة
+            if cn == "الفترة":
+                if is_red:    f = red_arial
+                elif is_orange: f = orange_arial
+                else:         f = arial_fmt
+            elif cn in numeric_cols and val != "":
+                try:
+                    val = int(str(val).replace(".0", ""))
+                except Exception:
+                    pass
+                if is_red:    f = red_num_fmt
+                elif is_orange: f = orange_num_fmt
+                else:         f = num_fmt
+            else:
+                if is_red:    f = red_fmt
+                elif is_orange: f = orange_fmt
+                elif cn == "توقيت الاختبار" and is_yellow: f = yellow_fmt
+                elif cn == "الفترة"          and is_yellow: f = yellow_fmt
+                else:         f = normal_fmt
+
+            ws.write(er, ci, str(val) if isinstance(val, str) else val, f)
+
+    # فك الحماية الكاملة — بدون ws.protect()
+    workbook.close()
+    output.seek(0)
+    return output.read(), len(red_rows), len(orange_rows), len(time_period_issues), day_report
+
+
+# ── واجهة المرحلة الثانية ───────────────────────────────────────────────────
+st.markdown("<br>", unsafe_allow_html=True)
+st.markdown(
+    """
+    <div style="background:linear-gradient(135deg,#1a3a5c,#2874a6);border-radius:16px;
+    padding:1.8rem 2.5rem;margin-bottom:1.5rem;box-shadow:0 8px 32px rgba(26,58,92,0.3);
+    text-align:center;color:white;">
+        <div style="font-size:1.8rem;font-weight:900;margin:0;">🔄 المرحلة الثانية — مراجعة ملفات المعلمات</div>
+        <div style="font-size:0.95rem;margin:0.4rem 0 0;opacity:0.88;">ارفعي الملفات المُعادة من المعلمات لمعالجتها وتدقيقها</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+st.markdown('<div class="section-title">📂 رفع ملفات المعلمات المُعادة</div>', unsafe_allow_html=True)
+
+uploaded_stage2 = st.file_uploader(
+    "ارفعي ملفات المعلمات بعد تعبئتها",
+    type=["xlsx"],
+    accept_multiple_files=True,
+    label_visibility="collapsed",
+    key="stage2_uploader",
+)
+
+if uploaded_stage2:
+    chips2 = " ".join(
+        ['<span class="file-chip">📄 ' + f.name + "</span>" for f in uploaded_stage2]
+    )
+    st.markdown("<div style='margin:0.5rem 0 1rem'>" + chips2 + "</div>", unsafe_allow_html=True)
+
+    # لون الأسطر
+    st.markdown(
+        """
+        <div style="background:white;border-radius:10px;padding:0.8rem 1.2rem;
+        margin-bottom:1rem;border:1px solid #e0d0f8;font-size:0.88rem;direction:rtl;">
+            <b>دليل الألوان:</b> &nbsp;
+            <span style="background:#FF9999;padding:2px 10px;border-radius:4px;">🔴 شرطي</span> &nbsp;
+            <span style="background:#FFD580;padding:2px 10px;border-radius:4px;">🟠 ملاحظة جوهرية</span> &nbsp;
+            <span style="background:#FFFF99;padding:2px 10px;border-radius:4px;">🟡 تعارض فترة/وقت</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if st.button("🔄 معالجة ومراجعة الملفات", type="primary", use_container_width=True, key="stage2_btn"):
+        with st.spinner("جارٍ التدقيق والمعالجة..."):
+            stage2_results = {}
+            stage2_errors  = []
+            day_reports    = {}
+            total_red = total_orange = total_yellow = 0
+
+            for uf in uploaded_stage2:
+                try:
+                    fb = uf.read()
+                    out_bytes, n_red, n_orange, n_yellow, d_report = process_stage2_file(fb, days_list)
+                    out_name = uf.name
+                    stage2_results[out_name] = out_bytes
+                    total_red    += n_red
+                    total_orange += n_orange
+                    total_yellow += n_yellow
+                    if d_report.get("has_issue") or d_report.get("unassigned", 0) > 0:
+                        day_reports[uf.name] = d_report
+                except Exception as e:
+                    stage2_errors.append("❌ " + uf.name + ": " + str(e))
+
+        for e in stage2_errors:
+            st.error(e)
+
+        if stage2_results:
+            cols2 = st.columns(4)
+            with cols2[0]:
+                st.markdown('<div class="stat-card"><div class="number">' + str(len(stage2_results)) + '</div><div class="label">ملف معالج</div></div>', unsafe_allow_html=True)
+            with cols2[1]:
+                st.markdown('<div class="stat-card"><div class="number" style="color:#c0392b">' + str(total_red) + '</div><div class="label">صف شرطي 🔴</div></div>', unsafe_allow_html=True)
+            with cols2[2]:
+                st.markdown('<div class="stat-card"><div class="number" style="color:#e67e22">' + str(total_orange) + '</div><div class="label">ملاحظة جوهرية 🟠</div></div>', unsafe_allow_html=True)
+            with cols2[3]:
+                st.markdown('<div class="stat-card"><div class="number" style="color:#b7950b">' + str(total_yellow) + '</div><div class="label">تعارض فترة 🟡</div></div>', unsafe_allow_html=True)
+
+            # ── تقرير توزيع الأيام ──────────────────────────────────────────────
+            if day_reports:
+                st.markdown('<div class="section-title">📊 تقرير توزيع الأيام</div>', unsafe_allow_html=True)
+                for fname, report in day_reports.items():
+                    total_finished = report.get("total", 0)
+                    unassigned     = report.get("unassigned", 0)
+                    base           = report.get("ideal_base", 0)
+                    xtra           = report.get("ideal_extra", 0)
+
+                    st.markdown(
+                        "<div style='background:white;border-radius:10px;padding:1rem 1.5rem;"
+                        "margin-bottom:1rem;border:1px solid #e0d0f8;direction:rtl;'>"
+                        "<div style='font-weight:700;font-size:1rem;color:#3d2060;margin-bottom:0.6rem;'>"
+                        "📄 " + fname + "</div>"
+                        "<div style='font-size:0.85rem;color:#555;margin-bottom:0.6rem;'>"
+                        "إجمالي اللواتي أنهين المقرر: <b>" + str(total_finished) + "</b> &nbsp;|&nbsp; "
+                        "التوزيع المثالي: <b>" + str(base) + ("+" if xtra else "") + ("1 لأول " + str(xtra) + " أيام" if xtra else "") + " لكل يوم</b>"
+                        + (" &nbsp;|&nbsp; <span style='color:#e67e22;font-weight:600;'>⚠️ " + str(unassigned) + " بدون يوم</span>" if unassigned else "") +
+                        "</div>",
+                        unsafe_allow_html=True,
+                    )
+
+                    rows_html = ""
+                    for day, info in report.get("days", {}).items():
+                        bg = "#fff5f5" if "🔴" in info["status"] else ("#f0fff4" if "🟢" in info["status"] else "#fafafa")
+                        rows_html += (
+                            "<tr style='background:" + bg + ";'>"
+                            "<td style='padding:6px 12px;font-weight:600;'>" + day + "</td>"
+                            "<td style='padding:6px 12px;text-align:center;'>" + str(info["actual"]) + "</td>"
+                            "<td style='padding:6px 12px;text-align:center;'>" + str(info["ideal"]) + "</td>"
+                            "<td style='padding:6px 12px;'>" + info["status"] + "</td>"
+                            "</tr>"
+                        )
+
+                    st.markdown(
+                        "<table style='width:100%;border-collapse:collapse;font-size:0.88rem;'>"
+                        "<thead><tr style='background:#f0e8fb;'>"
+                        "<th style='padding:7px 12px;text-align:right;'>اليوم</th>"
+                        "<th style='padding:7px 12px;'>الفعلي</th>"
+                        "<th style='padding:7px 12px;'>المثالي</th>"
+                        "<th style='padding:7px 12px;text-align:right;'>الحالة</th>"
+                        "</tr></thead><tbody>" + rows_html + "</tbody></table></div>",
+                        unsafe_allow_html=True,
+                    )
+
+            zip2 = io.BytesIO()
+            with zipfile.ZipFile(zip2, "w", zipfile.ZIP_DEFLATED) as zf:
+                for fname, fbytes in stage2_results.items():
+                    zf.writestr(fname, fbytes)
+            zip2.seek(0)
+
+            st.markdown('<div class="section-title">📦 تحميل الملفات المُدققة</div>', unsafe_allow_html=True)
+            st.download_button(
+                label="⬇️ تحميل جميع الملفات المُعالجة — ZIP",
+                data=zip2,
+                file_name="مراجعة_المعلمات.zip",
+                mime="application/zip",
+                use_container_width=True,
+                key="stage2_download",
+            )
+
 st.markdown(
     """
     <hr style="margin:2rem 0 1rem; border-color:#d8c8f0;">
