@@ -1112,47 +1112,9 @@ def build_distribution_report(day_reports):
     output.seek(0)
     return output.read()
 
-
-def fix_time_minutes(time_raw):
-    """
-    يُصحح الوقت — الدقائق المقبولة: 00، 15، 30، 45 فقط
-    رقم واحد (1-5) بعد النقطتين → ×10  (12:3 → 12:30)
-    رقم واحد (6-9)              → يُقرَّب (9:7  → 9:00)
-    Excel serial                → يُحوَّل ويُقرَّب
-    """
-    if time_raw is None or str(time_raw).strip() in ("", "nan"):
-        return ""
-    s = str(time_raw).strip()
-    # Excel serial
-    try:
-        f = float(s)
-        if 0 < f < 1:
-            total_min = round(f * 24 * 60)
-            h = total_min // 60
-            m = total_min % 60
-            closest = min(VALID_MINUTES, key=lambda x: abs(x - m))
-            return f"{h}:{closest:02d}"
-    except ValueError:
-        pass
-    # نص وقت
-    s = s.replace(".", ":").replace("٫", ":")
-    if ":" not in s:
-        s = (s[:-2] + ":" + s[-2:]) if len(s) > 2 else s + ":00"
-    parts = s.split(":")
-    try:
-        h = int(parts[0])
-        raw_m = parts[1].strip() if len(parts) > 1 else "0"
-        m = int(raw_m)
-        if len(raw_m) == 1 and m <= 5:
-            m = m * 10
-        closest = min(VALID_MINUTES, key=lambda x: abs(x - m))
-        return f"{h}:{closest:02d}"
-    except Exception:
-        return str(time_raw)
-
-
 def process_stage2_file(file_bytes, days_list, statuses_list, periods_list):
     """معالجة ملف واحد مُعاد من المعلمة"""
+    import xlsxwriter
 
     df = read_xlsx_raw(file_bytes)
 
@@ -1173,63 +1135,60 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list):
         if col not in df.columns:
             df[col] = ""
 
-    # ── تحليل توزيع الأيام ───────────────────────────────────────────────────
+    # ── تحليل توزيع الأيام (تقرير فقط) ──────────────────────────────────────
     day_report = {}
     if col_map["status"] and col_map["day"] and days_list:
-        day_report = analyze_day_distribution(
-            df, days_list, col_map["day"], col_map["status"]
-        )
+        day_report = analyze_day_distribution(df, days_list, col_map["day"], col_map["status"])
 
     # ── فحص كل صف ────────────────────────────────────────────────────────────
-    camera_rows       = []   # كاميرا  → صف كامل أحمر
-    shurty_rows       = []   # شرطي فقط → خلية الحالة أصفر
-    note_rows         = []   # ملاحظة جوهرية فقط → خلية الاسم أحمر
-    both_rows         = []   # شرطي + جوهرية → خلية الحالة أصفر + خلية الاسم أحمر
-    empty_status_rows = []
-    wrong_data_rows   = []
+    red_rows          = []   # شرطي
+    orange_rows       = []   # ملاحظات جوهرية
+    empty_status_rows = []   # حالة فارغة
+    wrong_data_rows   = []   # بيانات خاطئة (أنهت بلا يوم / لم تنه بها بيانات)
 
     STATUS_FINISHED = "أنهت المقرر"
 
     for idx, row in df.iterrows():
-        status   = str(row.get(col_map["status"] or "الحالة",          "")).strip()
-        day      = str(row.get(col_map["day"]    or "يوم الاختبار",    "")).strip()
-        note     = str(row.get(col_map["notes"]  or "الملاحظات",       "")).strip()
-        time_raw = row.get(col_map["time"]        or "توقيت الاختبار", "")
-        period   = str(row.get(col_map["period"]  or "الفترة",         "")).strip()
+        status = str(row.get(col_map["status"] or "الحالة", "")).strip()
+        day    = str(row.get(col_map["day"]    or "يوم الاختبار",   "")).strip()
+        note   = str(row.get(col_map["notes"]  or "الملاحظات",  "")).strip()
+        time_raw = row.get(col_map["time"]   or "توقيت الاختبار", "")
+        period   = str(row.get(col_map["period"] or "الفترة", "")).strip()
 
-        # تصحيح الوقت وتخزينه
-        fixed_time = fix_time_minutes(time_raw)
-        if col_map["time"] and fixed_time:
-            df.at[idx, col_map["time"]] = fixed_time
+        # تحويل الوقت من serial إلى HH:MM وتخزينه
+        time_str = excel_serial_to_time_str(time_raw)
+        if col_map["time"] and time_str:
+            df.at[idx, col_map["time"]] = time_str
 
-        # حالة فارغة
+        # 1. حالة فارغة
         if not status or status == "nan":
             empty_status_rows.append(idx)
             continue
 
-        # منطق البيانات
+        # 2. أنهت المقرر → يجب أن يكون لها يوم
         if status == STATUS_FINISHED:
             if not day or day == "nan":
                 wrong_data_rows.append(idx)
+
+
+
+        # 3. غير أنهت → يجب أن تكون خلايا اليوم/الوقت/الفترة فارغة
         else:
-            if ((day and day != "nan") or
-                    (fixed_time and str(fixed_time).strip() != "") or
-                    (period and period != "nan")):
+            has_extra = (
+                (day    and day    != "nan") or
+                (time_str and time_str != "") or
+                (period and period != "nan")
+            )
+            if has_extra:
+                # ميّز الصف فقط بدون مسح
                 wrong_data_rows.append(idx)
 
-        # منطق الألوان — كاميرا لها أولوية قصوى
-        has_camera = KEYWORD_CAMERA in note
-        has_shurty = KEYWORD_RED    in note
-        has_note   = any(kw in note for kw in NOTES_KEYWORDS)
-
-        if has_camera:
-            camera_rows.append(idx)
-        elif has_shurty and has_note:
-            both_rows.append(idx)
-        elif has_shurty:
-            shurty_rows.append(idx)
-        elif has_note:
-            note_rows.append(idx)
+        # 4. كلمة شرطي
+        if KEYWORD_RED in note:
+            red_rows.append(idx)
+        # 5. ملاحظات جوهرية
+        elif any(kw in note for kw in NOTES_KEYWORDS):
+            orange_rows.append(idx)
 
     # ── بناء Excel ───────────────────────────────────────────────────────────
     output   = io.BytesIO()
@@ -1246,26 +1205,21 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list):
             base.update(extra)
         return workbook.add_format(base)
 
-    header_fmt  = workbook.add_format({
-        "bold": True, "font_name": "Calibri", "font_size": 11,
-        "align": "center", "valign": "vcenter",
-        "border": 1, "bg_color": COLOR_HEADER, "locked": False,
-    })
-    normal_fmt  = fmt()
-    num_fmt     = fmt({"num_format": "0"})
-    arial_fmt   = fmt({"font_name": "Arial"})
-    # كاميرا — صف كامل أحمر
-    cam_fmt     = fmt({"bg_color": COLOR_RED})
-    cam_num     = fmt({"bg_color": COLOR_RED,    "num_format": "0"})
-    cam_arial   = fmt({"bg_color": COLOR_RED,    "font_name": "Arial"})
-    # شرطي — خلية الحالة أصفر
-    yellow_cell = fmt({"bg_color": COLOR_YELLOW})
-    # ملاحظة جوهرية — خلية الاسم أحمر
-    red_cell    = fmt({"bg_color": COLOR_RED})
-    # بيانات خاطئة — صف كامل أصفر
-    warn_fmt    = fmt({"bg_color": COLOR_YELLOW})
-    warn_num    = fmt({"bg_color": COLOR_YELLOW, "num_format": "0"})
-    warn_arial  = fmt({"bg_color": COLOR_YELLOW, "font_name": "Arial"})
+    header_fmt     = workbook.add_format({"bold": True, "font_name": "Calibri",
+                                          "font_size": 11, "align": "center",
+                                          "valign": "vcenter", "border": 1,
+                                          "bg_color": COLOR_HEADER, "locked": False})
+    normal_fmt     = fmt()
+    num_fmt        = fmt({"num_format": "0"})
+    red_fmt        = fmt({"bg_color": COLOR_RED})
+    red_num_fmt    = fmt({"bg_color": COLOR_RED,    "num_format": "0"})
+    orange_fmt     = fmt({"bg_color": COLOR_ORANGE})
+    orange_num_fmt = fmt({"bg_color": COLOR_ORANGE, "num_format": "0"})
+    yellow_fmt     = fmt({"bg_color": COLOR_YELLOW})
+    arial_fmt      = fmt({"font_name": "Arial"})
+    red_arial      = fmt({"bg_color": COLOR_RED,    "font_name": "Arial"})
+    orange_arial   = fmt({"bg_color": COLOR_ORANGE, "font_name": "Arial"})
+    yellow_arial   = fmt({"bg_color": COLOR_YELLOW, "font_name": "Arial"})
 
     col_widths = [7, 24, 14.1, 13.3, 7, 6, 5.3, 6.9, 19.8, 11.4, 10.7, 14, 39.8]
     for i, w in enumerate(col_widths):
@@ -1277,71 +1231,45 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list):
     numeric_cols = {"الرقم", "رقم الواتس اب", "المواليد"}
 
     for row_idx, row in df_out.iterrows():
-        er        = row_idx + 1
-        is_camera = row_idx in camera_rows
-        is_shurty = row_idx in shurty_rows
-        is_note   = row_idx in note_rows
-        is_both   = row_idx in both_rows
+        er = row_idx + 1
+        is_red    = row_idx in red_rows
+        is_orange = row_idx in orange_rows
         is_warn   = row_idx in empty_status_rows or row_idx in wrong_data_rows
 
         for ci, cn in enumerate(columns_order):
             val = row[cn]
             val = "" if pd.isna(val) else val
 
-            def write_cell(f):
-                if cn in numeric_cols and val != "":
-                    try:
-                        ws.write_number(er, ci, int(str(val).replace(".0", "")), f)
-                        return
-                    except Exception:
-                        pass
-                ws.write(er, ci, str(val) if isinstance(val, str) else val, f)
-
-            def normal_f():
-                if cn in numeric_cols and val != "":
-                    return num_fmt
-                if cn == "الفترة":
-                    return arial_fmt
-                return normal_fmt
-
-            if is_camera:
-                # صف كامل أحمر
-                write_cell(cam_num if cn in numeric_cols and val != ""
-                           else (cam_arial if cn == "الفترة" else cam_fmt))
-
-            elif is_both:
-                # شرطي + جوهرية: خلية الحالة أصفر + خلية الاسم أحمر + باقي عادي
-                if cn == "الحالة":
-                    write_cell(yellow_cell)
-                elif cn == "الاسم":
-                    write_cell(red_cell)
-                else:
-                    write_cell(normal_f())
-
-            elif is_shurty:
-                # خلية الحالة فقط أصفر
-                if cn == "الحالة":
-                    write_cell(yellow_cell)
-                else:
-                    write_cell(normal_f())
-
-            elif is_note:
-                # خلية الاسم فقط أحمر
-                if cn == "الاسم":
-                    write_cell(red_cell)
-                else:
-                    write_cell(normal_f())
-
+            # اختر لون الصف (الأولوية: أحمر > برتقالي > أصفر > عادي)
+            # أصفر: تعارض وقت/فترة + بيانات خاطئة (حالة فارغة أو غير أنهت مع بيانات)
+            if is_red:
+                row_color = "red"
+            elif is_orange:
+                row_color = "orange"
             elif is_warn:
-                # صف كامل أصفر
-                write_cell(warn_num if cn in numeric_cols and val != ""
-                           else (warn_arial if cn == "الفترة" else warn_fmt))
-
+                row_color = "yellow"
             else:
-                write_cell(normal_f())
+                row_color = "normal"
 
-    # ── القوائم المنسدلة ─────────────────────────────────────────────────────
-    last_dv_row = len(df_out) + 50
+            if cn == "الفترة":
+                f = {"red": red_arial, "orange": orange_arial,
+                     "yellow": yellow_arial}.get(row_color, arial_fmt)
+            elif cn in numeric_cols and val != "":
+                try:
+                    val = int(str(val).replace(".0", ""))
+                except Exception:
+                    pass
+                f = {"red": red_num_fmt, "orange": orange_num_fmt,
+                     "yellow": yellow_fmt}.get(row_color, num_fmt)
+            else:
+                f = {"red": red_fmt, "orange": orange_fmt,
+                     "yellow": yellow_fmt}.get(row_color, normal_fmt)
+
+            ws.write(er, ci, str(val) if isinstance(val, str) else val, f)
+
+    # ── القوائم المنسدلة (نفس المرحلة الأولى) ───────────────────────────────
+    num_rows    = len(df_out)
+    last_dv_row = num_rows + 50
 
     if days_list:
         ws.data_validation(1, 9, last_dv_row, 9, {
@@ -1361,8 +1289,7 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list):
 
     workbook.close()
     output.seek(0)
-    n_colored = len(camera_rows) + len(shurty_rows) + len(note_rows) + len(both_rows)
-    return (output.read(), n_colored, 0,
+    return (output.read(), len(red_rows), len(orange_rows),
             len(empty_status_rows) + len(wrong_data_rows), day_report)
 
 
