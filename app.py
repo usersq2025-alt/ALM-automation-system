@@ -953,6 +953,15 @@ NOTES_KEYWORDS = ["تغيير رقم", "تعديل مواليد", "تعديل ا
 
 VALID_MINUTES  = [0, 15, 30, 45]
 
+# تحديد AM/PM لكل فترة (للمطابقة في نظام 12 ساعة)
+PERIOD_AMPM = {
+    "فجراً":  "AM",
+    "ضحى":    "AM",
+    "ظهراً":  "AM",
+    "عصراً":  "PM",
+    "ليلاً":  "PM",
+}
+
 
 def analyze_day_distribution(students_df, days_list, day_col, status_col):
     """
@@ -1247,11 +1256,17 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list, peri
         if col_map["time"] and fixed_time:
             df.at[idx, col_map["time"]] = fixed_time
 
-        # مطابقة الفترة مع الوقت
+        # مطابقة الفترة مع الوقت (نظام 12 ساعة — الفترة تحدد AM/PM)
         if period_schedule and fixed_time and period:
             try:
                 t_parts = fixed_time.split(":")
-                t_min = int(t_parts[0]) * 60 + int(t_parts[1])
+                h = int(t_parts[0])
+                m = int(t_parts[1]) if len(t_parts) > 1 else 0
+                # استخدم الفترة لتحديد AM/PM
+                ampm = PERIOD_AMPM.get(period, "AM")
+                if ampm == "PM" and h < 12:
+                    h += 12
+                t_min = h * 60 + m
                 correct_period = None
                 for p_name, p_start, p_end in period_schedule:
                     if p_start <= t_min <= p_end:
