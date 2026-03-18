@@ -1411,6 +1411,262 @@ if uploaded_stage2:
                 key="stage2_download",
             )
 
+DAYS_ORDER = ["الإثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت", "الأحد"]
+
+def day_sort_key(day_val, days_list):
+    day_str = str(day_val).strip()
+    for i, d in enumerate(days_list):
+        if day_str == d or day_str in d or d in day_str:
+            return i
+    for i, d in enumerate(DAYS_ORDER):
+        if day_str == d or day_str in d or d in day_str:
+            return i + 100
+    return 999
+
+
+def build_stage3_file(files_dict, days_list):
+    """
+    يدمج ملفات كل المعلمات في ملف Excel واحد بثلاث أوراق:
+    1. المتقدمات للاختبار  ← أنهت المقرر، مرتبة: المعلمة ثم اليوم ثم الوقت
+    2. غير متقدمات         ← بقية الحالات، مرتبة: المعلمة ثم الاسم أبجدياً
+    3. اختبار مبكر         ← ملاحظات تحتوي 'قدمت الاختبار'
+    """
+    all_rows = []
+    for fname, fb in files_dict.items():
+        try:
+            df = read_xlsx_raw(fb)
+            df.columns = [str(c).strip() for c in df.columns]
+            df = df.dropna(how="all")
+            all_rows.append(df)
+        except Exception:
+            pass
+
+    if not all_rows:
+        raise ValueError("لم يتم قراءة أي بيانات")
+
+    combined = pd.concat(all_rows, ignore_index=True)
+
+    cols = [
+        "الرقم", "الاسم", "رقم الواتس اب", "المجموعة", "البلد",
+        "المواليد", "الإجازة", "المعلمة", "الحالة",
+        "يوم الاختبار", "توقيت الاختبار", "الفترة", "الملاحظات",
+    ]
+    for c in cols:
+        if c not in combined.columns:
+            combined[c] = ""
+    combined = combined[cols].copy()
+
+    for c in cols:
+        combined[c] = combined[c].fillna("").astype(str).str.strip()
+        combined[c] = combined[c].replace("nan", "")
+
+    # ── تقسيم الأوراق الثلاث ─────────────────────────────────────────────────
+    mask_early    = combined["الملاحظات"].str.contains("قدمت الاختبار", na=False)
+    mask_finished = (combined["الحالة"] == "أنهت المقرر") & (~mask_early)
+    mask_others   = (~mask_finished) & (~mask_early)
+
+    df_finished = combined[mask_finished].copy()
+    df_others   = combined[mask_others].copy()
+    df_early    = combined[mask_early].copy()
+
+    # ── ترتيب المتقدمات: المعلمة ← اليوم ← الوقت ────────────────────────────
+    df_finished["_day"] = df_finished["يوم الاختبار"].apply(
+        lambda x: day_sort_key(x, days_list)
+    )
+    df_finished["_time"] = pd.to_numeric(
+        df_finished["توقيت الاختبار"], errors="coerce"
+    ).fillna(999)
+    df_finished = df_finished.sort_values(
+        ["المعلمة", "_day", "_time"]
+    ).drop(columns=["_day", "_time"]).reset_index(drop=True)
+
+    # ── ترتيب غير المتقدمات: المعلمة ← الاسم أبجدياً ────────────────────────
+    df_others = df_others.sort_values(
+        ["المعلمة", "الاسم"]
+    ).reset_index(drop=True)
+
+    # ── ترتيب اختبار مبكر: المعلمة ← الاسم ──────────────────────────────────
+    df_early = df_early.sort_values(
+        ["المعلمة", "الاسم"]
+    ).reset_index(drop=True)
+
+    # ── بناء ملف Excel ───────────────────────────────────────────────────────
+    output   = io.BytesIO()
+    workbook = xlsxwriter.Workbook(output, {"in_memory": True})
+
+    header_fmt = workbook.add_format({
+        "bold": True, "font_name": "Calibri", "font_size": 11,
+        "align": "center", "valign": "vcenter", "border": 1,
+    })
+    cell_fmt = workbook.add_format({
+        "font_name": "Calibri", "font_size": 11,
+        "align": "center", "valign": "vcenter", "border": 1,
+    })
+    num_fmt = workbook.add_format({
+        "font_name": "Calibri", "font_size": 11,
+        "align": "center", "valign": "vcenter", "border": 1,
+        "num_format": "0",
+    })
+    time_fmt = workbook.add_format({
+        "font_name": "Calibri", "font_size": 11,
+        "align": "center", "valign": "vcenter", "border": 1,
+        "num_format": "h:mm",
+    })
+    arial_fmt = workbook.add_format({
+        "font_name": "Arial", "font_size": 11,
+        "align": "center", "valign": "vcenter", "border": 1,
+    })
+
+    numeric_set  = {"الرقم", "رقم الواتس اب", "المواليد"}
+    col_widths   = {
+        "الرقم": 7, "الاسم": 24, "رقم الواتس اب": 14,
+        "المجموعة": 13, "البلد": 7, "المواليد": 6,
+        "الإجازة": 5.3, "المعلمة": 7, "الحالة": 20,
+        "يوم الاختبار": 11, "توقيت الاختبار": 11,
+        "الفترة": 14, "الملاحظات": 40,
+    }
+
+    def write_sheet(name, df_sheet):
+        ws = workbook.add_worksheet(name)
+        ws.right_to_left()
+        for ci, cn in enumerate(cols):
+            ws.set_column(ci, ci, col_widths.get(cn, 12))
+        for ci, cn in enumerate(cols):
+            ws.write(0, ci, cn, header_fmt)
+        for ri, row in df_sheet.iterrows():
+            er = ri + 1
+            for ci, cn in enumerate(cols):
+                val = row[cn]
+                if cn in numeric_set and val not in ("", "nan"):
+                    try:
+                        ws.write_number(er, ci, int(str(val).replace(".0", "")), num_fmt)
+                    except Exception:
+                        ws.write(er, ci, val, cell_fmt)
+                elif cn == "توقيت الاختبار" and val not in ("", "nan"):
+                    try:
+                        fval = float(val)
+                        if 0 < fval < 1:
+                            ws.write_number(er, ci, fval, time_fmt)
+                        else:
+                            ws.write(er, ci, val, cell_fmt)
+                    except Exception:
+                        ws.write(er, ci, val, cell_fmt)
+                elif cn == "الفترة":
+                    ws.write(er, ci, val, arial_fmt)
+                else:
+                    ws.write(er, ci, val, cell_fmt)
+
+    write_sheet("المتقدمات للاختبار", df_finished)
+    write_sheet("غير متقدمات",        df_others)
+    write_sheet("اختبار مبكر",        df_early)
+
+    workbook.close()
+    output.seek(0)
+    return output.read(), len(df_finished), len(df_others), len(df_early)
+
+
+# ── واجهة المرحلة الثالثة ────────────────────────────────────────────────────
+st.markdown("<br>", unsafe_allow_html=True)
+st.markdown(
+    """
+    <div style="background:linear-gradient(135deg,#1a4e1a,#2e7d32);border-radius:16px;
+    padding:1.8rem 2.5rem;margin-bottom:1.5rem;box-shadow:0 8px 32px rgba(26,78,26,0.3);
+    text-align:center;color:white;">
+        <div style="font-size:1.8rem;font-weight:900;margin:0;">📊 المرحلة الثالثة — تجميع اللجان</div>
+        <div style="font-size:0.95rem;margin:0.4rem 0 0;opacity:0.88;">
+            ارفعي ملفات المعلمات المُراجعة لتجميعها في ملف لجان واحد
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+st.markdown('<div class="section-title">📂 رفع ملفات المعلمات</div>', unsafe_allow_html=True)
+
+uploaded_stage3 = st.file_uploader(
+    "ارفعي ملفات المعلمات",
+    type=["xlsx"],
+    accept_multiple_files=True,
+    label_visibility="collapsed",
+    key="stage3_uploader",
+)
+
+if uploaded_stage3:
+    chips3 = " ".join(
+        ['<span class="file-chip">📄 ' + f.name + "</span>" for f in uploaded_stage3]
+    )
+    st.markdown("<div style='margin:0.5rem 0 1rem'>" + chips3 + "</div>", unsafe_allow_html=True)
+
+    output_name = st.text_input(
+        "اسم الملف الناتج",
+        value="اللجان_المجمعة.xlsx",
+        key="stage3_output_name",
+    )
+
+    if st.button("📊 تجميع وبناء اللجان", type="primary",
+                 use_container_width=True, key="stage3_btn"):
+        with st.spinner("جارٍ التجميع..."):
+            files_dict = {}
+            read_errors = []
+            for uf in uploaded_stage3:
+                try:
+                    uf.seek(0)
+                    files_dict[uf.name] = uf.read()
+                except Exception as e:
+                    read_errors.append("❌ " + uf.name + ": " + str(e))
+
+            for e in read_errors:
+                st.error(e)
+
+            if files_dict:
+                try:
+                    result_bytes, n_fin, n_oth, n_ear = build_stage3_file(
+                        files_dict, days_list
+                    )
+
+                    cols3 = st.columns(4)
+                    with cols3[0]:
+                        st.markdown(
+                            '<div class="stat-card"><div class="number">'
+                            + str(len(files_dict))
+                            + '</div><div class="label">ملف مُدمج</div></div>',
+                            unsafe_allow_html=True,
+                        )
+                    with cols3[1]:
+                        st.markdown(
+                            '<div class="stat-card"><div class="number" style="color:#1a4e1a;">'
+                            + str(n_fin)
+                            + '</div><div class="label">متقدمة ✅</div></div>',
+                            unsafe_allow_html=True,
+                        )
+                    with cols3[2]:
+                        st.markdown(
+                            '<div class="stat-card"><div class="number" style="color:#b7950b;">'
+                            + str(n_oth)
+                            + '</div><div class="label">غير متقدمة 🕐</div></div>',
+                            unsafe_allow_html=True,
+                        )
+                    with cols3[3]:
+                        st.markdown(
+                            '<div class="stat-card"><div class="number" style="color:#1a5276;">'
+                            + str(n_ear)
+                            + '</div><div class="label">اختبار مبكر 🎓</div></div>',
+                            unsafe_allow_html=True,
+                        )
+
+                    fname_out = output_name if output_name.endswith(".xlsx") else output_name + ".xlsx"
+                    st.download_button(
+                        label="⬇️ تحميل ملف اللجان المجمعة",
+                        data=result_bytes,
+                        file_name=fname_out,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True,
+                        key="stage3_download",
+                    )
+
+                except Exception as e:
+                    st.error("❌ خطأ في التجميع: " + str(e))
+                    
 st.markdown(
     """
     <hr style="margin:2rem 0 1rem; border-color:#d8c8f0;">
