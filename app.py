@@ -1655,7 +1655,7 @@ def day_sort_key(day_val, days_list):
     return 999
 
 
-def build_stage3_file(files_dict, days_list):
+def build_stage3_file(files_dict, days_list, existing_bytes=None):
     all_rows = []
     for fname, fb in files_dict.items():
         try:
@@ -1672,6 +1672,25 @@ def build_stage3_file(files_dict, days_list):
         raise ValueError("لم يتم قراءة أي بيانات")
 
     combined = pd.concat(all_rows, ignore_index=True)
+
+    # ── إذا وُجد ملف أم: استخرج بياناته وادمجها ─────────────────────────────
+    if existing_bytes:
+        try:
+            existing_sheets = read_existing_stage3(existing_bytes)
+            existing_rows = []
+            for sheet_name, df_ex in existing_sheets.items():
+                if df_ex.empty: continue
+                df_ex.columns = [str(c).strip() for c in df_ex.columns]
+                df_ex = df_ex.dropna(how="all")
+                if "الاسم" in df_ex.columns:
+                    df_ex = df_ex[df_ex["الاسم"].astype(str).str.strip().replace("nan","") != ""]
+                if not df_ex.empty:
+                    existing_rows.append(df_ex)
+            if existing_rows:
+                combined = pd.concat([pd.concat(existing_rows, ignore_index=True), combined],
+                                     ignore_index=True)
+        except Exception as ex:
+            pass  # إذا فشلت القراءة نكمل بالملفات الجديدة فقط
 
     cols = [
         "الرقم", "الاسم", "رقم الواتس اب", "المجموعة", "البلد",
@@ -1775,6 +1794,84 @@ def build_stage3_file(files_dict, days_list):
     return output.read(), len(df_finished), len(df_others), len(df_early)
 
 
+
+def read_existing_stage3(file_bytes):
+    """
+    يقرأ ملف اللجان الأم الموجود (3 أوراق) ويُعيد dict:
+    {"المتقدمات للاختبار": df, "غير متقدمات": df, "اختبار مبكر": df}
+    """
+    import zipfile as zf_mod
+    NS2 = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+
+    def col_idx(col_str):
+        idx = 0
+        for ch in col_str.upper():
+            idx = idx * 26 + (ord(ch) - ord('A') + 1)
+        return idx - 1
+
+    result = {}
+    with zf_mod.ZipFile(io.BytesIO(file_bytes)) as zf:
+        shared = []
+        if "xl/sharedStrings.xml" in zf.namelist():
+            tree = ET.parse(zf.open("xl/sharedStrings.xml"))
+            for si in tree.getroot().iter("{" + NS2 + "}si"):
+                shared.append("".join(t.text or "" for t in si.iter("{" + NS2 + "}t")))
+
+        rels = {r.attrib["Id"]: r.attrib["Target"]
+                for r in ET.parse(zf.open("xl/_rels/workbook.xml.rels")).getroot()}
+        sheets_el = ET.parse(zf.open("xl/workbook.xml")).getroot().find("{" + NS2 + "}sheets")
+
+        for sh in sheets_el:
+            sh_name = sh.attrib.get("name", "")
+            r_id = sh.attrib.get(
+                "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+            )
+            target = rels.get(r_id, "")
+            sheet_path = (target[1:] if target.startswith("/xl/")
+                         else ("xl/" + target if not target.startswith("xl/") else target))
+
+            rows_dict = {}; max_col = 0
+            sheet_data = ET.parse(zf.open(sheet_path)).getroot().find("{" + NS2 + "}sheetData")
+            all_rows = list(sheet_data.iter("{" + NS2 + "}row"))
+            if not all_rows:
+                result[sh_name] = pd.DataFrame()
+                continue
+
+            for row_el in all_rows:
+                row_num = int(row_el.attrib.get("r", 0)) - 1
+                row_dict = {}
+                for c in row_el.iter("{" + NS2 + "}c"):
+                    addr = c.attrib.get("r", "A1")
+                    ci = col_idx("".join(ch for ch in addr if ch.isalpha()))
+                    max_col = max(max_col, ci)
+                    t = c.attrib.get("t", "")
+                    if t == "inlineStr":
+                        is_el = c.find("{" + NS2 + "}is")
+                        row_dict[ci] = ("".join(x.text or "" for x in is_el.iter("{" + NS2 + "}t"))
+                                        if is_el is not None else "")
+                    elif t == "s":
+                        v_el = c.find("{" + NS2 + "}v")
+                        row_dict[ci] = shared[int(v_el.text)] if v_el is not None and v_el.text else ""
+                    else:
+                        v_el = c.find("{" + NS2 + "}v")
+                        if v_el is not None and v_el.text:
+                            val = v_el.text
+                            try: val = int(val) if "." not in val else float(val)
+                            except: pass
+                            row_dict[ci] = val
+                        else: row_dict[ci] = ""
+                rows_dict[row_num] = row_dict
+
+            max_row = max(rows_dict.keys())
+            matrix = [[rows_dict.get(r, {}).get(c, "") for c in range(max_col + 1)]
+                      for r in range(max_row + 1)]
+            headers = [str(v).strip() if v != "" else "col_" + str(i)
+                       for i, v in enumerate(matrix[0])]
+            df = pd.DataFrame(matrix[1:], columns=headers)
+            result[sh_name] = df
+
+    return result
+
 # ── واجهة المرحلة الثالثة ────────────────────────────────────────────────────
 st.markdown("<br>", unsafe_allow_html=True)
 st.markdown(
@@ -1791,7 +1888,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.markdown('<div class="section-title">📂 رفع ملفات المعلمات</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-title">📂 رفع ملفات المعلمات الجديدة</div>', unsafe_allow_html=True)
 
 uploaded_stage3 = st.file_uploader(
     "ارفعي ملفات المعلمات",
@@ -1807,14 +1904,41 @@ if uploaded_stage3:
     )
     st.markdown("<div style='margin:0.5rem 0 1rem'>" + chips3 + "</div>", unsafe_allow_html=True)
 
+    # ── هل يوجد ملف أم سابق؟ ─────────────────────────────────────────────────
+    st.markdown('<div class="section-title">📁 هل لديكِ ملف لجان سابق؟</div>', unsafe_allow_html=True)
+    has_existing = st.radio(
+        "اختاري:",
+        ["لا — أنشئي ملفاً جديداً من الملفات المرفوعة",
+         "نعم — أضيفي الملفات المرفوعة للملف الأم الموجود"],
+        key="stage3_mode",
+        label_visibility="collapsed",
+    )
+
+    existing_file = None
+    if "نعم" in has_existing:
+        st.markdown(
+            "<div style='font-size:0.88rem;color:#555;direction:rtl;margin-bottom:0.5rem;'>"
+            "ارفعي ملف اللجان الأم (الذي يحتوي 3 أوراق: متقدمات / غير متقدمات / اختبار مبكر)"
+            "</div>", unsafe_allow_html=True,
+        )
+        existing_file = st.file_uploader(
+            "ملف اللجان الأم",
+            type=["xlsx"],
+            key="stage3_existing",
+            label_visibility="collapsed",
+        )
+        if existing_file:
+            st.success("✅ تم رفع الملف الأم: " + existing_file.name)
+
     output_name = st.text_input(
         "اسم الملف الناتج",
         value="اللجان_المجمعة.xlsx",
         key="stage3_output_name",
     )
 
-    if st.button("📊 تجميع وبناء اللجان", type="primary",
-                 use_container_width=True, key="stage3_btn"):
+    btn_label = "📊 إضافة للملف الأم وتحميل" if "نعم" in has_existing else "📊 تجميع وبناء اللجان"
+
+    if st.button(btn_label, type="primary", use_container_width=True, key="stage3_btn"):
         with st.spinner("جارٍ التجميع..."):
             files_dict = {}
             read_errors = []
@@ -1830,13 +1954,22 @@ if uploaded_stage3:
 
             if files_dict:
                 try:
+                    # ── إذا يوجد ملف أم: اقرأ بياناته وادمجه مع الجديد ─────
+                    existing_bytes = None
+                    if "نعم" in has_existing and existing_file:
+                        existing_file.seek(0)
+                        existing_bytes = existing_file.read()
+
                     result_bytes, n_fin, n_oth, n_ear = build_stage3_file(
-                        files_dict, days_list
+                        files_dict, days_list, existing_bytes=existing_bytes
                     )
+
+                    mode_label = "إضافة للملف الأم" if existing_bytes else "ملف جديد"
+                    st.success("✅ " + mode_label + " — تم بنجاح")
 
                     cols3 = st.columns(4)
                     with cols3[0]:
-                        st.markdown('<div class="stat-card"><div class="number">' + str(len(files_dict)) + '</div><div class="label">ملف مُدمج</div></div>', unsafe_allow_html=True)
+                        st.markdown('<div class="stat-card"><div class="number">' + str(len(files_dict)) + '</div><div class="label">ملف مُضاف</div></div>', unsafe_allow_html=True)
                     with cols3[1]:
                         st.markdown('<div class="stat-card"><div class="number" style="color:#1a4e1a;">' + str(n_fin) + '</div><div class="label">متقدمة ✅</div></div>', unsafe_allow_html=True)
                     with cols3[2]:
