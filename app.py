@@ -679,9 +679,41 @@ with st.sidebar:
         help="كل حالة في سطر منفصل",
     )
 
+    periods_schedule_text = st.text_area(
+        "🕐 أوقات الفترات (للمطابقة)",
+        value="فجراً: 4:00-8:45\nضحى: 9:00-11:45\nظهراً: 12:00-15:45\nعصراً: 16:00-18:45\nليلاً: 19:00-21:30",
+        height=145,
+        help="النسق: اسم الفترة: HH:MM-HH:MM\nيُستخدم للتحقق من تطابق الوقت مع الفترة",
+    )
+
     days_list = parse_list(days_text)
     periods_list = parse_list(periods_text)
     statuses_list = parse_list(statuses_text)
+
+    # بناء جدول الفترات من النص
+    def parse_period_schedule(text):
+        """فجراً: 4:00-8:45 → [("فجراً", 240, 525)]"""
+        schedule = []
+        for line in text.strip().splitlines():
+            line = line.strip()
+            if ":" not in line: continue
+            parts = line.split(":", 1)
+            if len(parts) < 2: continue
+            name = parts[0].strip()
+            times = parts[1].strip()
+            if "-" not in times: continue
+            t_parts = times.split("-")
+            try:
+                def to_min(t):
+                    t = t.strip()
+                    h, m = (t.split(":") + ["0"])[:2]
+                    return int(h) * 60 + int(m)
+                schedule.append((name, to_min(t_parts[0]), to_min(t_parts[1])))
+            except Exception:
+                continue
+        return schedule
+
+    period_schedule = parse_period_schedule(periods_schedule_text)
 
     st.markdown(
         "<div style='margin-top:1rem; padding:0.8rem; background:rgba(255,255,255,0.08);"
@@ -1151,7 +1183,7 @@ def fix_time_minutes(time_raw):
         return str(time_raw)
 
 
-def process_stage2_file(file_bytes, days_list, statuses_list, periods_list):
+def process_stage2_file(file_bytes, days_list, statuses_list, periods_list, period_schedule=None):
     """معالجة ملف واحد مُعاد من المعلمة"""
 
     df = read_xlsx_raw(file_bytes)
@@ -1181,12 +1213,14 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list):
         )
 
     # ── فحص كل صف ────────────────────────────────────────────────────────────
-    camera_rows       = []   # كاميرا  → صف كامل أحمر
-    shurty_rows       = []   # شرطي فقط → خلية الحالة أصفر
-    note_rows         = []   # ملاحظة جوهرية فقط → خلية الاسم أحمر
-    both_rows         = []   # شرطي + جوهرية → خلية الحالة أصفر + خلية الاسم أحمر
-    empty_status_rows = []
-    wrong_data_rows   = []
+    camera_rows         = []   # كاميرا  → صف كامل أحمر
+    shurty_rows         = []   # شرطي فقط → خلية الحالة أصفر
+    note_rows           = []   # ملاحظة جوهرية فقط → خلية الاسم أحمر
+    both_rows           = []   # شرطي + جوهرية → خلية الحالة أصفر + خلية الاسم أحمر
+    empty_status_rows   = []
+    wrong_data_rows     = []
+    time_format_errors  = []   # توقيت بتنسيق تاريخ خاطئ
+    period_mismatch_rows = []  # فترة لا تتطابق مع الوقت
 
     STATUS_FINISHED = "أنهت المقرر"
 
@@ -1197,12 +1231,40 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list):
         time_raw = row.get(col_map["time"]        or "توقيت الاختبار", "")
         period   = str(row.get(col_map["period"]  or "الفترة",         "")).strip()
 
+        # تحقق من تنسيق التوقيت — قيمة > 1 تعني تاريخ وليس ساعة
+        try:
+            fval = float(str(time_raw).strip())
+            if fval >= 1:
+                time_format_errors.append((idx, str(time_raw)))
+        except (ValueError, TypeError):
+            pass
+
         # تصحيح الوقت وتخزينه
         fixed_time = fix_time_minutes(time_raw)
         if col_map["time"] and fixed_time:
             df.at[idx, col_map["time"]] = fixed_time
 
-        # حالة فارغة
+        # مطابقة الفترة مع الوقت
+        if period_schedule and fixed_time and period:
+            try:
+                t_parts = fixed_time.split(":")
+                t_min = int(t_parts[0]) * 60 + int(t_parts[1])
+                correct_period = None
+                for p_name, p_start, p_end in period_schedule:
+                    if p_start <= t_min <= p_end:
+                        correct_period = p_name
+                        break
+                if correct_period and correct_period != period:
+                    period_mismatch_rows.append((idx, period, correct_period))
+            except Exception:
+                pass
+
+        # تخطي الصفوف الفارغة كلياً (بعد نهاية البيانات)
+        name_val = str(row.get("الاسم", "")).strip()
+        if not name_val or name_val == "nan":
+            continue
+
+        # حالة فارغة لكن الاسم موجود
         if not status or status == "nan":
             empty_status_rows.append(idx)
             continue
@@ -1289,13 +1351,21 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list):
             val = "" if pd.isna(val) else val
 
             def write_cell(f):
-                if cn in numeric_cols and val != "":
+                if cn == "رقم الواتس اب" and val != "":
+                    # الواتساب دائماً كنص لتجنب scientific notation
+                    try:
+                        ws.write_string(er, ci, str(int(float(str(val).replace(".0","")))), f)
+                    except Exception:
+                        ws.write_string(er, ci, str(val), f)
+                elif cn in numeric_cols and val != "":
                     try:
                         ws.write_number(er, ci, int(str(val).replace(".0", "")), f)
                         return
                     except Exception:
                         pass
-                ws.write(er, ci, str(val) if isinstance(val, str) else val, f)
+                    ws.write(er, ci, str(val) if isinstance(val, str) else val, f)
+                else:
+                    ws.write(er, ci, str(val) if isinstance(val, str) else val, f)
 
             def normal_f():
                 if cn in numeric_cols and val != "":
@@ -1332,6 +1402,13 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list):
                 else:
                     write_cell(normal_f())
 
+            elif row_idx in [i for i, *_ in period_mismatch_rows]:
+                # فترة لا تتطابق — خلية الفترة أصفر فقط
+                if cn == "الفترة":
+                    write_cell(yellow_cell)
+                else:
+                    write_cell(normal_f())
+
             elif is_warn:
                 # صف كامل أصفر
                 write_cell(warn_num if cn in numeric_cols and val != ""
@@ -1363,7 +1440,8 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list):
     output.seek(0)
     n_colored = len(camera_rows) + len(shurty_rows) + len(note_rows) + len(both_rows)
     return (output.read(), n_colored, 0,
-            len(empty_status_rows) + len(wrong_data_rows), day_report)
+            len(empty_status_rows) + len(wrong_data_rows), day_report,
+            time_format_errors, period_mismatch_rows)
 
 
 # ── واجهة المرحلة الثانية ───────────────────────────────────────────────────
@@ -1413,26 +1491,54 @@ if uploaded_stage2:
 
     if st.button("🔄 معالجة ومراجعة الملفات", type="primary", use_container_width=True, key="stage2_btn"):
         with st.spinner("جارٍ التدقيق والمعالجة..."):
-            stage2_results = {}
-            stage2_errors  = []
-            day_reports    = {}
+            stage2_results    = {}
+            stage2_errors     = []
+            day_reports       = {}
+            time_fmt_warnings = {}  # {fname: [(row_idx, raw_val)]}
+            period_warnings   = {}  # {fname: [(row_idx, actual, correct)]}
             total_red = total_issues = 0
 
             for uf in uploaded_stage2:
                 try:
                     fb = uf.read()
-                    out_bytes, n_colored, _, n_issues, d_report = process_stage2_file(fb, days_list, statuses_list, periods_list)
+                    out_bytes, n_colored, _, n_issues, d_report, t_errors, p_mismatches = process_stage2_file(
+                        fb, days_list, statuses_list, periods_list, period_schedule
+                    )
                     out_name = uf.name
                     stage2_results[out_name] = out_bytes
                     total_red    += n_colored
                     total_issues += n_issues
                     if d_report.get("has_issue") or d_report.get("unassigned", 0) > 0:
                         day_reports[uf.name] = d_report
+                    if t_errors:
+                        time_fmt_warnings[uf.name] = t_errors
+                    if p_mismatches:
+                        period_warnings[uf.name] = p_mismatches
                 except Exception as e:
                     stage2_errors.append("❌ " + uf.name + ": " + str(e))
 
         for e in stage2_errors:
             st.error(e)
+
+        # ── تنبيهات تنسيق التوقيت ────────────────────────────────────────────
+        if time_fmt_warnings:
+            st.markdown('<div class="section-title">⚠️ تنبيهات تنسيق التوقيت</div>', unsafe_allow_html=True)
+            for fname, errors in time_fmt_warnings.items():
+                rows_str = "، ".join(f"صف {idx+2} (قيمة: {raw})" for idx, raw in errors)
+                st.warning(f"📄 **{fname}** — خلايا التوقيت مُنسَّقة كتاريخ وليس ساعة: {rows_str}")
+            st.info("💡 الحل: افتحي الملف الأصلي، حددي عمود التوقيت، وغيّري تنسيق الخلايا إلى 'وقت' (hh:mm)")
+
+        # ── تنبيهات عدم تطابق الفترة ─────────────────────────────────────────
+        if period_warnings:
+            st.markdown('<div class="section-title">🕐 تعارض الفترة مع الوقت</div>', unsafe_allow_html=True)
+            for fname, mismatches in period_warnings.items():
+                with st.expander(f"📄 {fname} — {len(mismatches)} تعارض"):
+                    for idx, actual, correct in mismatches:
+                        st.markdown(
+                            f"&nbsp; صف **{idx+2}**: الفترة المكتوبة **{actual}** "
+                            f"← الصحيحة للوقت هي **{correct}**",
+                            unsafe_allow_html=True,
+                        )
 
         if stage2_results:
             cols2 = st.columns(4)
