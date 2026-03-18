@@ -12,241 +12,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.markdown(
-    """
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;900&display=swap');
-
-    html, body, [class*="css"] { font-family: 'Tajawal', sans-serif; direction: rtl; }
-    .stApp { background: linear-gradient(135deg, #f3f0f8 0%, #e8e0f0 100%); }
-    h1, h2, h3 { font-family: 'Tajawal', sans-serif !important; }
-
-    /* ── Hero ── */
-    .hero-header {
-        background: linear-gradient(135deg, #3d2060 0%, #6b3fa0 50%, #8b5cc8 100%);
-        border-radius: 16px; padding: 2rem 2.5rem; margin-bottom: 2rem;
-        box-shadow: 0 8px 32px rgba(61,32,96,0.3); text-align: center; color: white;
-    }
-    .hero-header h1 { font-size: 2.4rem; font-weight: 900; margin: 0; text-shadow: 0 2px 4px rgba(0,0,0,0.2); }
-    .hero-header p { font-size: 1.05rem; margin: 0.5rem 0 0; opacity: 0.88; font-weight: 300; }
-
-    /* ── Cards ── */
-    .stat-card {
-        background: white; border-radius: 12px; padding: 1.2rem 1.5rem;
-        box-shadow: 0 2px 12px rgba(0,0,0,0.07); border-right: 4px solid #6b3fa0; margin-bottom: 1rem;
-    }
-    .stat-card .number { font-size: 2rem; font-weight: 900; color: #3d2060; line-height: 1; }
-    .stat-card .label { font-size: 0.85rem; color: #777; margin-top: 4px; }
-
-    .file-chip {
-        display: inline-block; background: #f0e8fb; border: 1px solid #c4a0e8;
-        color: #3d2060; border-radius: 20px; padding: 4px 14px;
-        font-size: 0.82rem; margin: 3px; font-weight: 500;
-    }
-    .success-banner {
-        background: linear-gradient(90deg, #f0e8fb, #e0d0f8); border: 1px solid #c4a0e8;
-        border-radius: 10px; padding: 1rem 1.5rem; color: #3d2060;
-        font-weight: 600; font-size: 1.05rem; margin: 1rem 0;
-    }
-    .section-title {
-        font-size: 1.1rem; font-weight: 700; color: #3d2060;
-        border-bottom: 2px solid #c4a0e8; padding-bottom: 6px; margin: 1.5rem 0 1rem;
-    }
-    .upload-zone {
-        background: white; border: 2px dashed #c4a0e8; border-radius: 16px;
-        padding: 2rem; text-align: center; margin: 1rem 0;
-    }
-
-    /* ── Sidebar background ── */
-    [data-testid="stSidebar"] > div:first-child {
-        background: linear-gradient(180deg, #2d1b4e 0%, #3d2060 100%) !important;
-    }
-
-    /* ── Sidebar — force ALL text to light purple ── */
-    [data-testid="stSidebar"],
-    [data-testid="stSidebar"] p,
-    [data-testid="stSidebar"] span,
-    [data-testid="stSidebar"] div,
-    [data-testid="stSidebar"] label {
-        color: #e8d5f8 !important;
-        font-family: 'Tajawal', sans-serif !important;
-    }
-    [data-testid="stSidebar"] label {
-        font-weight: 700 !important;
-        font-size: 0.95rem !important;
-    }
-
-    /* ── Sidebar textarea — dark bg + white text ── */
-    [data-testid="stSidebar"] textarea,
-    [data-testid="stSidebar"] .stTextArea textarea {
-        background-color: #1e1035 !important;
-        border: 2px solid #9b6fd4 !important;
-        border-radius: 8px !important;
-        color: #f0e6ff !important;
-        font-family: 'Tajawal', sans-serif !important;
-        font-size: 0.92rem !important;
-        direction: rtl !important;
-        caret-color: #e8d5f8 !important;
-    }
-    [data-testid="stSidebar"] textarea:focus,
-    [data-testid="stSidebar"] .stTextArea textarea:focus {
-        border-color: #c4a0e8 !important;
-        box-shadow: 0 0 0 2px rgba(196,160,232,0.3) !important;
-    }
-    [data-testid="stSidebar"] textarea::placeholder {
-        color: #9b7dbf !important;
-    }
-
-    /* ── Sidebar tooltip/help text ── */
-    [data-testid="stSidebar"] small,
-    [data-testid="stSidebar"] .stMarkdown {
-        color: #c4a0e8 !important;
-    }
-
-    /* ── Buttons ── */
-    .stButton > button {
-        font-family: 'Tajawal', sans-serif !important;
-        font-weight: 700 !important;
-        border-radius: 10px !important;
-    }
-    .stButton > button[kind="primary"] {
-        background: linear-gradient(135deg, #3d2060, #6b3fa0) !important;
-        border: none !important;
-        color: white !important;
-        box-shadow: 0 4px 15px rgba(45,27,78,0.3) !important;
-    }
-    .stDownloadButton > button {
-        background: linear-gradient(135deg, #1a5276, #2874a6) !important;
-        color: white !important; font-family: 'Tajawal', sans-serif !important;
-        font-weight: 700 !important; border: none !important; border-radius: 10px !important;
-        padding: 0.6rem 2rem !important; font-size: 1rem !important;
-        box-shadow: 0 4px 15px rgba(26,82,118,0.3) !important;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
-
-
-def col_letter_to_index(col_str):
-    """Convert Excel column letter(s) to 0-based index. e.g. A->0, B->1, Z->25, AA->26"""
-    idx = 0
-    for ch in col_str.upper():
-        idx = idx * 26 + (ord(ch) - ord('A') + 1)
-    return idx - 1
-
-
-def read_xlsx_raw(file_bytes):
-    """
-    Reads .xlsx by parsing XML directly — handles both 'inlineStr' and shared-string cells.
-    Completely bypasses openpyxl styles/Fill to avoid Fill errors.
-    """
-    with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
-
-        # 1. Shared strings table
-        shared = []
-        if "xl/sharedStrings.xml" in zf.namelist():
-            tree = ET.parse(zf.open("xl/sharedStrings.xml"))
-            for si in tree.getroot().iter("{" + NS + "}si"):
-                texts = [t.text or "" for t in si.iter("{" + NS + "}t")]
-                shared.append("".join(texts))
-
-        # 2. Resolve first sheet path via relationships
-        rels_tree = ET.parse(zf.open("xl/_rels/workbook.xml.rels"))
-        rels = {r.attrib["Id"]: r.attrib["Target"] for r in rels_tree.getroot()}
-
-        wb_tree = ET.parse(zf.open("xl/workbook.xml"))
-        sheets_el = wb_tree.getroot().find("{" + NS + "}sheets")
-        first_sheet = sheets_el[0]
-        r_id = first_sheet.attrib.get(
-            "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
-        )
-        target = rels[r_id]
-        if target.startswith("/xl/"):
-            sheet_path = target[1:]
-        elif target.startswith("xl/"):
-            sheet_path = target
-        else:
-            sheet_path = "xl/" + target
-
-        # 3. Parse sheet rows — handle inlineStr, shared string, and numeric cells
-        sheet_tree = ET.parse(zf.open(sheet_path))
-        sheet_data = sheet_tree.getroot().find("{" + NS + "}sheetData")
-
-        rows_dict = {}
-        max_col = 0
-
-        for row_el in sheet_data.iter("{" + NS + "}row"):
-            row_num = int(row_el.attrib.get("r", 0)) - 1  # 0-based
-            row_dict = {}
-
-            for c in row_el.iter("{" + NS + "}c"):
-                addr = c.attrib.get("r", "A1")
-                # Extract column letters from address like "AB12"
-                col_letters = "".join(ch for ch in addr if ch.isalpha())
-                col_idx = col_letter_to_index(col_letters)
-                max_col = max(max_col, col_idx)
-
-                cell_type = c.attrib.get("t", "")
-
-                if cell_type == "inlineStr":
-                    # Text stored directly inside <is><t>...</t></is>
-                    is_el = c.find("{" + NS + "}is")
-                    if is_el is not None:
-                        texts = [t.text or "" for t in is_el.iter("{" + NS + "}t")]
-                        row_dict[col_idx] = "".join(texts)
-                    else:
-                        row_dict[col_idx] = ""
-
-                elif cell_type == "s":
-                    # Shared string index
-                    v_el = c.find("{" + NS + "}v")
-                    if v_el is not None and v_el.text is not None:
-                        try:
-                            row_dict[col_idx] = shared[int(v_el.text)]
-                        except (IndexError, ValueError):
-                            row_dict[col_idx] = v_el.text
-                    else:
-                        row_dict[col_idx] = ""
-
-                elif cell_type == "b":
-                    v_el = c.find("{" + NS + "}v")
-                    row_dict[col_idx] = bool(int(v_el.text)) if v_el is not None else ""
-
-                else:
-                    # Numeric or formula result
-                    v_el = c.find("{" + NS + "}v")
-                    if v_el is not None and v_el.text is not None:
-                        val = v_el.text
-                        try:
-                            val = int(val) if "." not in val else float(val)
-                        except (ValueError, TypeError):
-                            pass
-                        row_dict[col_idx] = val
-                    else:
-                        row_dict[col_idx] = ""
-
-            rows_dict[row_num] = row_dict
-
-        if not rows_dict:
-            raise ValueError("الملف فارغ")
-
-        # Build full matrix
-        max_row = max(rows_dict.keys())
-        matrix = []
-        for r in range(max_row + 1):
-            row_data = rows_dict.get(r, {})
-            matrix.append([row_data.get(c, "") for c in range(max_col + 1)])
-
-        # First row as headers
-        headers = [str(v).strip() if v != "" else "col_" + str(i)
-                   for i, v in enumerate(matrix[0])]
-        return pd.DataFrame(matrix[1:], columns=headers)
-
-
-
 def build_teacher_display_names(full_names_text):
     """
     تأخذ نصاً فيه اسم معلمة في كل سطر (الاسم الكامل)
@@ -481,7 +246,6 @@ def build_excel(df, days, periods, statuses):
     workbook.close()
     output.seek(0)
     return output.read()
-
 
 
 def extract_teacher_names(uploaded_files):
@@ -779,7 +543,8 @@ if uploaded_files:
         for i, (full_name, suggested) in enumerate(preview_map.items()):
             c1, c2, c3 = st.columns([3, 2, 2])
             c1.markdown(
-                "<div style='direction:rtl;padding-top:8px;font-size:0.9rem;'>" + full_name + "</div>",
+                "<div style='direction:rtl;padding-top:8px;font-size:0.9rem;'>"
+                + full_name + "</div>",
                 unsafe_allow_html=True,
             )
             c2.markdown(
@@ -849,7 +614,6 @@ else:
         """,
         unsafe_allow_html=True,
     )
-
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1001,8 +765,6 @@ def excel_serial_to_time_str(val):
         pass
     # نص وقت عادي
     return format_time(s)
-
-
 
 
 def build_distribution_report(day_reports):
@@ -1169,7 +931,6 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list):
         if status == STATUS_FINISHED:
             if not day or day == "nan":
                 wrong_data_rows.append(idx)
-
 
 
         # 3. غير أنهت → يجب أن تكون خلايا اليوم/الوقت/الفترة فارغة
@@ -1410,6 +1171,298 @@ if uploaded_stage2:
                 use_container_width=True,
                 key="stage2_download",
             )
+
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# المرحلة الثالثة — تجميع ملفات المعلمات في ملف واحد
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ترتيب الأيام الأسبوعية
+DAYS_ORDER = ["الإثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت", "الأحد"]
+
+def day_sort_key(day_val, days_list):
+    """يُعيد رقم اليوم حسب قائمة الأيام المحددة في الإعدادات"""
+    day_str = str(day_val).strip()
+    for i, d in enumerate(days_list):
+        if day_str == d or day_str in d or d in day_str:
+            return i
+    # fallback للأيام الافتراضية
+    for i, d in enumerate(DAYS_ORDER):
+        if day_str == d or day_str in d or d in day_str:
+            return i + 100
+    return 999
+
+
+def build_stage3_file(files_dict, days_list):
+    """
+    يجمع ملفات كل المعلمات في ملف Excel واحد بثلاث أوراق:
+    1. المتقدمات للاختبار  → حالة = أنهت المقرر، مرتبة: المعلمة ثم اليوم ثم الوقت
+    2. غير متقدمات        → بقية الحالات، مرتبة: المعلمة ثم الاسم أبجدياً
+    3. اختبار مبكر        → ملاحظات تحتوي "قدمت الاختبار"
+    """
+    all_rows = []
+
+    for fname, fb in files_dict.items():
+        try:
+            df = read_xlsx_raw(fb)
+            # تنظيف أسماء الأعمدة
+            df.columns = [str(c).strip() for c in df.columns]
+            # تجاهل الصفوف الفارغة كلياً
+            df = df.dropna(how="all")
+            all_rows.append(df)
+        except Exception:
+            pass
+
+    if not all_rows:
+        raise ValueError("لم يتم قراءة أي بيانات")
+
+    # دمج كل الملفات
+    combined = pd.concat(all_rows, ignore_index=True)
+
+    # تعريف الأعمدة المطلوبة
+    cols = ["الرقم", "الاسم", "رقم الواتس اب", "المجموعة", "البلد",
+            "المواليد", "الإجازة", "المعلمة", "الحالة",
+            "يوم الاختبار", "توقيت الاختبار", "الفترة", "الملاحظات"]
+    for c in cols:
+        if c not in combined.columns:
+            combined[c] = ""
+    combined = combined[cols].copy()
+
+    # تنظيف القيم
+    for c in cols:
+        combined[c] = combined[c].fillna("").astype(str).str.strip()
+        combined[c] = combined[c].replace("nan", "")
+
+    # ── تقسيم الأوراق ────────────────────────────────────────────────────────
+    # ورقة اختبار مبكر: ملاحظات تحتوي "قدمت الاختبار"
+    mask_early = combined["الملاحظات"].str.contains("قدمت الاختبار", na=False)
+
+    # ورقة المتقدمات: أنهت المقرر (باستثناء الاختبار المبكر)
+    mask_finished = (combined["الحالة"] == "أنهت المقرر") & (~mask_early)
+
+    # ورقة غير متقدمات: الباقي
+    mask_others = (~mask_finished) & (~mask_early)
+
+    df_finished = combined[mask_finished].copy()
+    df_others   = combined[mask_others].copy()
+    df_early    = combined[mask_early].copy()
+
+    # ── ترتيب المتقدمات: المعلمة ثم اليوم ثم الوقت ───────────────────────────
+    df_finished["_day_order"] = df_finished["يوم الاختبار"].apply(
+        lambda x: day_sort_key(x, days_list)
+    )
+    df_finished["_time_order"] = pd.to_numeric(
+        df_finished["توقيت الاختبار"], errors="coerce"
+    ).fillna(999)
+    df_finished = df_finished.sort_values(
+        ["المعلمة", "_day_order", "_time_order"]
+    ).drop(columns=["_day_order", "_time_order"])
+    df_finished = df_finished.reset_index(drop=True)
+
+    # ── ترتيب غير المتقدمات: المعلمة ثم الاسم أبجدياً ───────────────────────
+    df_others = df_others.sort_values(["المعلمة", "الاسم"]).reset_index(drop=True)
+
+    # ── ترتيب اختبار مبكر: المعلمة ثم الاسم ─────────────────────────────────
+    df_early = df_early.sort_values(["المعلمة", "الاسم"]).reset_index(drop=True)
+
+    # ── بناء Excel ───────────────────────────────────────────────────────────
+    output   = io.BytesIO()
+    workbook = xlsxwriter.Workbook(output, {"in_memory": True})
+
+    # صيغ مشتركة
+    header_fmt = workbook.add_format({
+        "bold": True, "font_name": "Calibri", "font_size": 11,
+        "align": "center", "valign": "vcenter",
+        "border": 1, "locked": False,
+    })
+    cell_fmt = workbook.add_format({
+        "font_name": "Calibri", "font_size": 11,
+        "align": "center", "valign": "vcenter",
+        "border": 1, "locked": False,
+    })
+    num_fmt = workbook.add_format({
+        "font_name": "Calibri", "font_size": 11,
+        "align": "center", "valign": "vcenter",
+        "border": 1, "locked": False,
+        "num_format": "0",
+    })
+    time_fmt = workbook.add_format({
+        "font_name": "Calibri", "font_size": 11,
+        "align": "center", "valign": "vcenter",
+        "border": 1, "locked": False,
+        "num_format": "h:mm",
+    })
+    arial_fmt = workbook.add_format({
+        "font_name": "Arial", "font_size": 11,
+        "align": "center", "valign": "vcenter",
+        "border": 1, "locked": False,
+    })
+
+    numeric_cols_set = {"الرقم", "رقم الواتس اب", "المواليد"}
+    col_widths_map   = {
+        "الرقم": 7, "الاسم": 24, "رقم الواتس اب": 14.1,
+        "المجموعة": 13.3, "البلد": 7, "المواليد": 6,
+        "الإجازة": 5.3, "المعلمة": 6.9, "الحالة": 19.8,
+        "يوم الاختبار": 11.4, "توقيت الاختبار": 10.7,
+        "الفترة": 14, "الملاحظات": 39.8,
+    }
+
+    def write_sheet(ws_name, df_sheet):
+        ws = workbook.add_worksheet(ws_name)
+        ws.right_to_left()
+
+        # عرض الأعمدة
+        for ci, col_name in enumerate(cols):
+            ws.set_column(ci, ci, col_widths_map.get(col_name, 12))
+
+        # هيدر
+        for ci, col_name in enumerate(cols):
+            ws.write(0, ci, col_name, header_fmt)
+
+        # بيانات
+        for ri, row in df_sheet.iterrows():
+            er = ri + 1
+            for ci, col_name in enumerate(cols):
+                val = row[col_name]
+
+                if col_name in numeric_cols_set and val != "":
+                    try:
+                        ws.write_number(er, ci, int(str(val).replace(".0", "")), num_fmt)
+                    except Exception:
+                        ws.write(er, ci, val, cell_fmt)
+
+                elif col_name == "توقيت الاختبار" and val != "":
+                    # حوّل serial أو نص إلى قيمة رقمية للعرض كـ h:mm
+                    try:
+                        fval = float(val)
+                        if 0 < fval < 1:
+                            ws.write_number(er, ci, fval, time_fmt)
+                        else:
+                            ws.write(er, ci, val, cell_fmt)
+                    except Exception:
+                        ws.write(er, ci, val, cell_fmt)
+
+                elif col_name == "الفترة":
+                    ws.write(er, ci, val, arial_fmt)
+
+                else:
+                    ws.write(er, ci, val, cell_fmt)
+
+    write_sheet("المتقدمات للاختبار", df_finished)
+    write_sheet("غير متقدمات",        df_others)
+    write_sheet("اختبار مبكر",        df_early)
+
+    workbook.close()
+    output.seek(0)
+    return output.read(), len(df_finished), len(df_others), len(df_early)
+
+
+# ── واجهة المرحلة الثالثة ────────────────────────────────────────────────────
+st.markdown("<br>", unsafe_allow_html=True)
+st.markdown(
+    """
+    <div style="background:linear-gradient(135deg,#1a4e1a,#2e7d32);border-radius:16px;
+    padding:1.8rem 2.5rem;margin-bottom:1.5rem;box-shadow:0 8px 32px rgba(26,78,26,0.3);
+    text-align:center;color:white;">
+        <div style="font-size:1.8rem;font-weight:900;margin:0;">📊 المرحلة الثالثة — تجميع اللجان</div>
+        <div style="font-size:0.95rem;margin:0.4rem 0 0;opacity:0.88;">
+            ارفعي ملفات المعلمات المُراجعة لتجميعها في ملف لجان واحد
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+st.markdown('<div class="section-title">📂 رفع ملفات المعلمات المُراجعة</div>', unsafe_allow_html=True)
+
+uploaded_stage3 = st.file_uploader(
+    "ارفعي ملفات المعلمات",
+    type=["xlsx"],
+    accept_multiple_files=True,
+    label_visibility="collapsed",
+    key="stage3_uploader",
+)
+
+if uploaded_stage3:
+    chips3 = " ".join(
+        ['<span class="file-chip">📄 ' + f.name + "</span>" for f in uploaded_stage3]
+    )
+    st.markdown("<div style='margin:0.5rem 0 1rem'>" + chips3 + "</div>", unsafe_allow_html=True)
+
+    # اسم الملف الناتج
+    output_name = st.text_input(
+        "اسم الملف الناتج",
+        value="اللجان_المجمعة.xlsx",
+        help="اكتبي اسم ملف الناتج",
+    )
+
+    if st.button("📊 تجميع الملفات وبناء اللجان", type="primary",
+                 use_container_width=True, key="stage3_btn"):
+        with st.spinner("جارٍ القراءة والتجميع..."):
+            # اقرأ كل الملفات
+            files_dict = {}
+            read_errors = []
+            for uf in uploaded_stage3:
+                try:
+                    uf.seek(0)
+                    files_dict[uf.name] = uf.read()
+                except Exception as e:
+                    read_errors.append("❌ " + uf.name + ": " + str(e))
+
+            for e in read_errors:
+                st.error(e)
+
+            if files_dict:
+                try:
+                    result_bytes, n_fin, n_oth, n_ear = build_stage3_file(
+                        files_dict, days_list
+                    )
+
+                    cols3 = st.columns(4)
+                    with cols3[0]:
+                        st.markdown(
+                            '<div class="stat-card"><div class="number">'
+                            + str(len(files_dict))
+                            + '</div><div class="label">ملف مُدمج</div></div>',
+                            unsafe_allow_html=True,
+                        )
+                    with cols3[1]:
+                        st.markdown(
+                            '<div class="stat-card"><div class="number" style="color:#1a4e1a;">'
+                            + str(n_fin)
+                            + '</div><div class="label">متقدمة للاختبار ✅</div></div>',
+                            unsafe_allow_html=True,
+                        )
+                    with cols3[2]:
+                        st.markdown(
+                            '<div class="stat-card"><div class="number" style="color:#b7950b;">'
+                            + str(n_oth)
+                            + '</div><div class="label">غير متقدمة 🕐</div></div>',
+                            unsafe_allow_html=True,
+                        )
+                    with cols3[3]:
+                        st.markdown(
+                            '<div class="stat-card"><div class="number" style="color:#1a5276;">'
+                            + str(n_ear)
+                            + '</div><div class="label">اختبار مبكر 🎓</div></div>',
+                            unsafe_allow_html=True,
+                        )
+
+                    fname_out = output_name if output_name.endswith(".xlsx") else output_name + ".xlsx"
+                    st.download_button(
+                        label="⬇️ تحميل ملف اللجان المجمعة",
+                        data=result_bytes,
+                        file_name=fname_out,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True,
+                        key="stage3_download",
+                    )
+
+                except Exception as e:
+                    st.error("❌ خطأ في التجميع: " + str(e))
+
 
 st.markdown(
     """
