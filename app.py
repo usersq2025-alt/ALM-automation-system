@@ -941,14 +941,17 @@ PERIOD_SCHEDULE = [
     ("ليلاً", 19*60+15, 21*60+30),
 ]
 
-KEYWORD_RED   = "شرطي"
-COLOR_RED     = "#FF9999"   # أحمر فاتح — شرطي
-COLOR_ORANGE  = "#FFD580"   # برتقالي — ملاحظات جوهرية
-COLOR_YELLOW  = "#FFFF99"   # أصفر — تعارض فترة/وقت
-COLOR_HEADER  = "#D9D9D9"   # رمادي فاتح للهيدر
+KEYWORD_RED    = "شرطي"
+KEYWORD_CAMERA = "كاميرا"
+COLOR_RED      = "#FF9999"
+COLOR_ORANGE   = "#FFD580"
+COLOR_YELLOW   = "#FFFF99"
+COLOR_HEADER   = "#D9D9D9"
 
 NOTES_KEYWORDS = ["تغيير رقم", "تعديل مواليد", "تعديل اسم", "تغيير اسم",
                   "تصحيح رقم", "تصحيح اسم", "تصحيح مواليد"]
+
+VALID_MINUTES  = [0, 15, 30, 45]
 
 
 def analyze_day_distribution(students_df, days_list, day_col, status_col):
