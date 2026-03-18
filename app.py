@@ -1201,12 +1201,21 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list, peri
     df = read_xlsx_raw(file_bytes)
 
     col_map = {
-        "status": next((c for c in df.columns if "الحالة"         in str(c)), None),
-        "day":    next((c for c in df.columns if "يوم الاختبار"   in str(c)), None),
-        "time":   next((c for c in df.columns if "توقيت الاختبار" in str(c)), None),
-        "period": next((c for c in df.columns if "الفترة"         in str(c)), None),
-        "notes":  next((c for c in df.columns if "الملاحظات"      in str(c)), None),
+        "status":  next((c for c in df.columns if "الحالة"         in str(c)), None),
+        "day":     next((c for c in df.columns if "يوم الاختبار"   in str(c)), None),
+        "time":    next((c for c in df.columns if "توقيت الاختبار" in str(c)), None),
+        "period":  next((c for c in df.columns if "الفترة"         in str(c)), None),
+        "notes":   next((c for c in df.columns if "الملاحظات"      in str(c)), None),
+        "teacher": next((c for c in df.columns if "المعلمة"        in str(c)), None),
     }
+
+    # اسم الملف الناتج = قيمة عمود المعلمة
+    teacher_col_val = ""
+    if col_map["teacher"]:
+        vals = df[col_map["teacher"]].dropna().astype(str).str.strip()
+        vals = vals[vals != ""]
+        if not vals.empty:
+            teacher_col_val = vals.iloc[0]
 
     columns_order = [
         "الرقم", "الاسم", "رقم الواتس اب", "المجموعة",
@@ -1332,20 +1341,29 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list, peri
         "border": 1, "bg_color": COLOR_HEADER, "locked": False,
     })
     normal_fmt  = fmt()
-    num_fmt     = fmt({"num_format": "0"})
+    num_fmt     = fmt({"num_format": "0"})           # أرقام عامة
+    phone_fmt   = fmt({"num_format": "0"})           # واتساب: Number بدون فواصل
+    time_fmt    = fmt({"num_format": "h:mm"})        # وقت: Custom h:mm
     arial_fmt   = fmt({"font_name": "Arial"})
     # كاميرا — صف كامل أحمر
-    cam_fmt     = fmt({"bg_color": COLOR_RED})
-    cam_num     = fmt({"bg_color": COLOR_RED,    "num_format": "0"})
-    cam_arial   = fmt({"bg_color": COLOR_RED,    "font_name": "Arial"})
+    cam_fmt       = fmt({"bg_color": COLOR_RED})
+    cam_num       = fmt({"bg_color": COLOR_RED, "num_format": "0"})
+    cam_phone     = fmt({"bg_color": COLOR_RED, "num_format": "0"})
+    cam_time      = fmt({"bg_color": COLOR_RED, "num_format": "h:mm"})
+    cam_arial     = fmt({"bg_color": COLOR_RED, "font_name": "Arial"})
     # شرطي — خلية الحالة أصفر
-    yellow_cell = fmt({"bg_color": COLOR_YELLOW})
+    yellow_cell   = fmt({"bg_color": COLOR_YELLOW})
+    yellow_time   = fmt({"bg_color": COLOR_YELLOW, "num_format": "h:mm"})
     # ملاحظة جوهرية — خلية الاسم أحمر
-    red_cell    = fmt({"bg_color": COLOR_RED})
+    red_cell      = fmt({"bg_color": COLOR_RED})
     # بيانات خاطئة — صف كامل أصفر
-    warn_fmt    = fmt({"bg_color": COLOR_YELLOW})
-    warn_num    = fmt({"bg_color": COLOR_YELLOW, "num_format": "0"})
-    warn_arial  = fmt({"bg_color": COLOR_YELLOW, "font_name": "Arial"})
+    warn_fmt      = fmt({"bg_color": COLOR_YELLOW})
+    warn_num      = fmt({"bg_color": COLOR_YELLOW, "num_format": "0"})
+    warn_phone    = fmt({"bg_color": COLOR_YELLOW, "num_format": "0"})
+    warn_time     = fmt({"bg_color": COLOR_YELLOW, "num_format": "h:mm"})
+    warn_arial    = fmt({"bg_color": COLOR_YELLOW, "font_name": "Arial"})
+    # تعارض فترة — خلية الفترة أصفر
+    yellow_period = fmt({"bg_color": COLOR_YELLOW, "font_name": "Arial"})
 
     col_widths = [7, 24, 14.1, 13.3, 7, 6, 5.3, 6.9, 19.8, 11.4, 10.7, 14, 39.8]
     for i, w in enumerate(col_widths):
@@ -1368,25 +1386,40 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list, peri
             val = row[cn]
             val = "" if pd.isna(val) else val
 
-            def write_cell(f):
+            def write_cell(f, phone_f=None, time_f=None):
                 if cn == "رقم الواتس اب" and val != "":
-                    # الواتساب دائماً كنص لتجنب scientific notation
+                    # واتساب: Number بدون فواصل (write_number + num_format "0")
+                    use_f = phone_f if phone_f else f
                     try:
-                        ws.write_string(er, ci, str(int(float(str(val).replace(".0","")))), f)
+                        ws.write_number(er, ci, int(float(str(val).replace(".0",""))), use_f)
                     except Exception:
-                        ws.write_string(er, ci, str(val), f)
-                elif cn in numeric_cols and val != "":
+                        ws.write(er, ci, str(val), use_f)
+                elif cn == "توقيت الاختبار" and val != "":
+                    # وقت: serial مع h:mm أو نص إذا لم يكن serial
+                    use_f = time_f if time_f else f
+                    try:
+                        fval = float(str(val).replace(".0","")) if ":" not in str(val) else None
+                        if fval is not None and 0 < fval < 1:
+                            ws.write_number(er, ci, fval, use_f)
+                        else:
+                            # نص وقت مثل "9:30" — اكتبه كنص
+                            ws.write_string(er, ci, str(val), use_f)
+                    except Exception:
+                        ws.write_string(er, ci, str(val), use_f)
+                elif cn in {"الرقم", "المواليد"} and val != "":
                     try:
                         ws.write_number(er, ci, int(str(val).replace(".0", "")), f)
-                        return
                     except Exception:
-                        pass
-                    ws.write(er, ci, str(val) if isinstance(val, str) else val, f)
+                        ws.write(er, ci, str(val) if isinstance(val, str) else val, f)
                 else:
                     ws.write(er, ci, str(val) if isinstance(val, str) else val, f)
 
             def normal_f():
-                if cn in numeric_cols and val != "":
+                if cn == "رقم الواتس اب" and val != "":
+                    return phone_fmt
+                if cn == "توقيت الاختبار" and val != "":
+                    return time_fmt
+                if cn in {"الرقم", "المواليد"} and val != "":
                     return num_fmt
                 if cn == "الفترة":
                     return arial_fmt
@@ -1394,8 +1427,7 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list, peri
 
             if is_camera:
                 # صف كامل أحمر
-                write_cell(cam_num if cn in numeric_cols and val != ""
-                           else (cam_arial if cn == "الفترة" else cam_fmt))
+                write_cell(cam_fmt, phone_f=cam_phone, time_f=cam_time)
 
             elif is_both:
                 # شرطي + جوهرية: خلية الحالة أصفر + خلية الاسم أحمر + باقي عادي
@@ -1404,7 +1436,7 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list, peri
                 elif cn == "الاسم":
                     write_cell(red_cell)
                 else:
-                    write_cell(normal_f())
+                    write_cell(normal_f(), phone_f=phone_fmt, time_f=time_fmt)
 
             elif is_shurty:
                 # خلية الحالة فقط أصفر
@@ -1429,8 +1461,7 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list, peri
 
             elif is_warn:
                 # صف كامل أصفر
-                write_cell(warn_num if cn in numeric_cols and val != ""
-                           else (warn_arial if cn == "الفترة" else warn_fmt))
+                write_cell(warn_fmt, phone_f=warn_phone, time_f=warn_time)
 
             else:
                 write_cell(normal_f())
@@ -1459,7 +1490,7 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list, peri
     n_colored = len(camera_rows) + len(shurty_rows) + len(note_rows) + len(both_rows)
     return (output.read(), n_colored, 0,
             len(empty_status_rows) + len(wrong_data_rows), day_report,
-            time_format_errors, period_mismatch_rows)
+            time_format_errors, period_mismatch_rows, teacher_col_val)
 
 
 # ── واجهة المرحلة الثانية ───────────────────────────────────────────────────
@@ -1519,10 +1550,11 @@ if uploaded_stage2:
             for uf in uploaded_stage2:
                 try:
                     fb = uf.read()
-                    out_bytes, n_colored, _, n_issues, d_report, t_errors, p_mismatches = process_stage2_file(
+                    out_bytes, n_colored, _, n_issues, d_report, t_errors, p_mismatches, teacher_name = process_stage2_file(
                         fb, days_list, statuses_list, periods_list, period_schedule
                     )
-                    out_name = uf.name
+                    # اسم الملف = اسم المعلمة من العمود، وإلا اسم الملف الأصلي
+                    out_name = (teacher_name + ".xlsx") if teacher_name else uf.name
                     stage2_results[out_name] = out_bytes
                     total_red    += n_colored
                     total_issues += n_issues
