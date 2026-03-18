@@ -5,56 +5,246 @@ import zipfile
 import xlsxwriter
 import xml.etree.ElementTree as ET
 
+st.set_page_config(
+    page_title="أداة مقرأة",
+    page_icon="📖",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# حماية التطبيق بكلمة مرور
-# ═══════════════════════════════════════════════════════════════════════════════
-import os
+st.markdown(
+    """
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;900&display=swap');
 
-def check_password():
-    """يعرض شاشة الدخول ويُعيد True إذا كانت كلمة المرور صحيحة"""
+    html, body, [class*="css"] { font-family: 'Tajawal', sans-serif; direction: rtl; }
+    .stApp { background: linear-gradient(135deg, #f3f0f8 0%, #e8e0f0 100%); }
+    h1, h2, h3 { font-family: 'Tajawal', sans-serif !important; }
 
-    # كلمة المرور: من Streamlit Secrets إن وُجدت، وإلا من متغير بيئي، وإلا قيمة افتراضية
-    try:
-        correct = st.secrets["APP_PASSWORD"]
-    except Exception:
-        correct = os.environ.get("APP_PASSWORD", "maqraa2026")
+    /* ── Hero ── */
+    .hero-header {
+        background: linear-gradient(135deg, #3d2060 0%, #6b3fa0 50%, #8b5cc8 100%);
+        border-radius: 16px; padding: 2rem 2.5rem; margin-bottom: 2rem;
+        box-shadow: 0 8px 32px rgba(61,32,96,0.3); text-align: center; color: white;
+    }
+    .hero-header h1 { font-size: 2.4rem; font-weight: 900; margin: 0; text-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+    .hero-header p { font-size: 1.05rem; margin: 0.5rem 0 0; opacity: 0.88; font-weight: 300; }
 
-    if st.session_state.get("authenticated"):
-        return True
+    /* ── Cards ── */
+    .stat-card {
+        background: white; border-radius: 12px; padding: 1.2rem 1.5rem;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.07); border-right: 4px solid #6b3fa0; margin-bottom: 1rem;
+    }
+    .stat-card .number { font-size: 2rem; font-weight: 900; color: #3d2060; line-height: 1; }
+    .stat-card .label { font-size: 0.85rem; color: #777; margin-top: 4px; }
 
-    # شاشة الدخول
-    st.markdown(
-        """
-        <div style="max-width:400px;margin:8rem auto;background:white;border-radius:20px;
-        padding:2.5rem;box-shadow:0 8px 40px rgba(61,32,96,0.15);text-align:center;">
-            <div style="font-size:3rem;margin-bottom:0.5rem">📖</div>
-            <div style="font-size:1.5rem;font-weight:900;color:#3d2060;margin-bottom:0.3rem;">
-                أداة مقرأة
-            </div>
-            <div style="font-size:0.85rem;color:#888;margin-bottom:1.5rem;">
-                أدخلي كلمة المرور للمتابعة
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    .file-chip {
+        display: inline-block; background: #f0e8fb; border: 1px solid #c4a0e8;
+        color: #3d2060; border-radius: 20px; padding: 4px 14px;
+        font-size: 0.82rem; margin: 3px; font-weight: 500;
+    }
+    .success-banner {
+        background: linear-gradient(90deg, #f0e8fb, #e0d0f8); border: 1px solid #c4a0e8;
+        border-radius: 10px; padding: 1rem 1.5rem; color: #3d2060;
+        font-weight: 600; font-size: 1.05rem; margin: 1rem 0;
+    }
+    .section-title {
+        font-size: 1.1rem; font-weight: 700; color: #3d2060;
+        border-bottom: 2px solid #c4a0e8; padding-bottom: 6px; margin: 1.5rem 0 1rem;
+    }
+    .upload-zone {
+        background: white; border: 2px dashed #c4a0e8; border-radius: 16px;
+        padding: 2rem; text-align: center; margin: 1rem 0;
+    }
 
-    col = st.columns([1, 2, 1])[1]
-    pwd = col.text_input("كلمة المرور", type="password", label_visibility="collapsed",
-                         placeholder="كلمة المرور...")
+    /* ── Sidebar background ── */
+    [data-testid="stSidebar"] > div:first-child {
+        background: linear-gradient(180deg, #2d1b4e 0%, #3d2060 100%) !important;
+    }
 
-    if col.button("دخول ←", use_container_width=True, type="primary"):
-        if pwd == correct:
-            st.session_state["authenticated"] = True
-            st.rerun()
+    /* ── Sidebar — force ALL text to light purple ── */
+    [data-testid="stSidebar"],
+    [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] span,
+    [data-testid="stSidebar"] div,
+    [data-testid="stSidebar"] label {
+        color: #e8d5f8 !important;
+        font-family: 'Tajawal', sans-serif !important;
+    }
+    [data-testid="stSidebar"] label {
+        font-weight: 700 !important;
+        font-size: 0.95rem !important;
+    }
+
+    /* ── Sidebar textarea — dark bg + white text ── */
+    [data-testid="stSidebar"] textarea,
+    [data-testid="stSidebar"] .stTextArea textarea {
+        background-color: #1e1035 !important;
+        border: 2px solid #9b6fd4 !important;
+        border-radius: 8px !important;
+        color: #f0e6ff !important;
+        font-family: 'Tajawal', sans-serif !important;
+        font-size: 0.92rem !important;
+        direction: rtl !important;
+        caret-color: #e8d5f8 !important;
+    }
+    [data-testid="stSidebar"] textarea:focus,
+    [data-testid="stSidebar"] .stTextArea textarea:focus {
+        border-color: #c4a0e8 !important;
+        box-shadow: 0 0 0 2px rgba(196,160,232,0.3) !important;
+    }
+    [data-testid="stSidebar"] textarea::placeholder {
+        color: #9b7dbf !important;
+    }
+
+    /* ── Sidebar tooltip/help text ── */
+    [data-testid="stSidebar"] small,
+    [data-testid="stSidebar"] .stMarkdown {
+        color: #c4a0e8 !important;
+    }
+
+    /* ── Buttons ── */
+    .stButton > button {
+        font-family: 'Tajawal', sans-serif !important;
+        font-weight: 700 !important;
+        border-radius: 10px !important;
+    }
+    .stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, #3d2060, #6b3fa0) !important;
+        border: none !important;
+        color: white !important;
+        box-shadow: 0 4px 15px rgba(45,27,78,0.3) !important;
+    }
+    .stDownloadButton > button {
+        background: linear-gradient(135deg, #1a5276, #2874a6) !important;
+        color: white !important; font-family: 'Tajawal', sans-serif !important;
+        font-weight: 700 !important; border: none !important; border-radius: 10px !important;
+        padding: 0.6rem 2rem !important; font-size: 1rem !important;
+        box-shadow: 0 4px 15px rgba(26,82,118,0.3) !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+
+
+def col_letter_to_index(col_str):
+    """Convert Excel column letter(s) to 0-based index. e.g. A->0, B->1, Z->25, AA->26"""
+    idx = 0
+    for ch in col_str.upper():
+        idx = idx * 26 + (ord(ch) - ord('A') + 1)
+    return idx - 1
+
+
+def read_xlsx_raw(file_bytes):
+    """
+    Reads .xlsx by parsing XML directly — handles both 'inlineStr' and shared-string cells.
+    Completely bypasses openpyxl styles/Fill to avoid Fill errors.
+    """
+    with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
+
+        # 1. Shared strings table
+        shared = []
+        if "xl/sharedStrings.xml" in zf.namelist():
+            tree = ET.parse(zf.open("xl/sharedStrings.xml"))
+            for si in tree.getroot().iter("{" + NS + "}si"):
+                texts = [t.text or "" for t in si.iter("{" + NS + "}t")]
+                shared.append("".join(texts))
+
+        # 2. Resolve first sheet path via relationships
+        rels_tree = ET.parse(zf.open("xl/_rels/workbook.xml.rels"))
+        rels = {r.attrib["Id"]: r.attrib["Target"] for r in rels_tree.getroot()}
+
+        wb_tree = ET.parse(zf.open("xl/workbook.xml"))
+        sheets_el = wb_tree.getroot().find("{" + NS + "}sheets")
+        first_sheet = sheets_el[0]
+        r_id = first_sheet.attrib.get(
+            "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+        )
+        target = rels[r_id]
+        if target.startswith("/xl/"):
+            sheet_path = target[1:]
+        elif target.startswith("xl/"):
+            sheet_path = target
         else:
-            col.error("كلمة المرور غير صحيحة")
+            sheet_path = "xl/" + target
 
-    st.stop()
-    return False
+        # 3. Parse sheet rows — handle inlineStr, shared string, and numeric cells
+        sheet_tree = ET.parse(zf.open(sheet_path))
+        sheet_data = sheet_tree.getroot().find("{" + NS + "}sheetData")
 
-check_password()
+        rows_dict = {}
+        max_col = 0
+
+        for row_el in sheet_data.iter("{" + NS + "}row"):
+            row_num = int(row_el.attrib.get("r", 0)) - 1  # 0-based
+            row_dict = {}
+
+            for c in row_el.iter("{" + NS + "}c"):
+                addr = c.attrib.get("r", "A1")
+                # Extract column letters from address like "AB12"
+                col_letters = "".join(ch for ch in addr if ch.isalpha())
+                col_idx = col_letter_to_index(col_letters)
+                max_col = max(max_col, col_idx)
+
+                cell_type = c.attrib.get("t", "")
+
+                if cell_type == "inlineStr":
+                    # Text stored directly inside <is><t>...</t></is>
+                    is_el = c.find("{" + NS + "}is")
+                    if is_el is not None:
+                        texts = [t.text or "" for t in is_el.iter("{" + NS + "}t")]
+                        row_dict[col_idx] = "".join(texts)
+                    else:
+                        row_dict[col_idx] = ""
+
+                elif cell_type == "s":
+                    # Shared string index
+                    v_el = c.find("{" + NS + "}v")
+                    if v_el is not None and v_el.text is not None:
+                        try:
+                            row_dict[col_idx] = shared[int(v_el.text)]
+                        except (IndexError, ValueError):
+                            row_dict[col_idx] = v_el.text
+                    else:
+                        row_dict[col_idx] = ""
+
+                elif cell_type == "b":
+                    v_el = c.find("{" + NS + "}v")
+                    row_dict[col_idx] = bool(int(v_el.text)) if v_el is not None else ""
+
+                else:
+                    # Numeric or formula result
+                    v_el = c.find("{" + NS + "}v")
+                    if v_el is not None and v_el.text is not None:
+                        val = v_el.text
+                        try:
+                            val = int(val) if "." not in val else float(val)
+                        except (ValueError, TypeError):
+                            pass
+                        row_dict[col_idx] = val
+                    else:
+                        row_dict[col_idx] = ""
+
+            rows_dict[row_num] = row_dict
+
+        if not rows_dict:
+            raise ValueError("الملف فارغ")
+
+        # Build full matrix
+        max_row = max(rows_dict.keys())
+        matrix = []
+        for r in range(max_row + 1):
+            row_data = rows_dict.get(r, {})
+            matrix.append([row_data.get(c, "") for c in range(max_col + 1)])
+
+        # First row as headers
+        headers = [str(v).strip() if v != "" else "col_" + str(i)
+                   for i, v in enumerate(matrix[0])]
+        return pd.DataFrame(matrix[1:], columns=headers)
+
 
 
 def build_teacher_display_names(full_names_text):
@@ -291,6 +481,7 @@ def build_excel(df, days, periods, statuses):
     workbook.close()
     output.seek(0)
     return output.read()
+
 
 
 def extract_teacher_names(uploaded_files):
@@ -588,8 +779,7 @@ if uploaded_files:
         for i, (full_name, suggested) in enumerate(preview_map.items()):
             c1, c2, c3 = st.columns([3, 2, 2])
             c1.markdown(
-                "<div style='direction:rtl;padding-top:8px;font-size:0.9rem;'>"
-                + full_name + "</div>",
+                "<div style='direction:rtl;padding-top:8px;font-size:0.9rem;'>" + full_name + "</div>",
                 unsafe_allow_html=True,
             )
             c2.markdown(
@@ -659,6 +849,7 @@ else:
         """,
         unsafe_allow_html=True,
     )
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -810,6 +1001,8 @@ def excel_serial_to_time_str(val):
         pass
     # نص وقت عادي
     return format_time(s)
+
+
 
 
 def build_distribution_report(day_reports):
@@ -976,6 +1169,7 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list):
         if status == STATUS_FINISHED:
             if not day or day == "nan":
                 wrong_data_rows.append(idx)
+
 
 
         # 3. غير أنهت → يجب أن تكون خلايا اليوم/الوقت/الفترة فارغة
@@ -1216,7 +1410,6 @@ if uploaded_stage2:
                 use_container_width=True,
                 key="stage2_download",
             )
-
 
 st.markdown(
     """
