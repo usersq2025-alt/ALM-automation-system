@@ -19,7 +19,7 @@ LOGO_B64 = load_logo_b64()
 LOGO_SRC  = f"data:image/png;base64,{LOGO_B64}" if LOGO_B64 else None
 
 st.set_page_config(
-    page_title="نظام أتمتة - ألف لام ميم",
+    page_title="أداة مقرأة",
     page_icon="logo.png" if os.path.exists("logo.png") else "📖",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -134,6 +134,33 @@ st.markdown(
         font-weight: 700 !important; border: none !important; border-radius: 10px !important;
         padding: 0.6rem 2rem !important; font-size: 1rem !important;
         box-shadow: 0 4px 15px rgba(26,82,118,0.3) !important;
+    }
+
+    /* ── إخفاء محتوى الـ Sidebar عند طيّه ── */
+    [data-testid="collapsedControl"] {
+        display: none !important;
+    }
+    section[data-testid="stSidebar"][aria-expanded="false"] {
+        width: 0 !important;
+        min-width: 0 !important;
+    }
+    section[data-testid="stSidebar"][aria-expanded="false"] > div {
+        overflow: hidden !important;
+        width: 0 !important;
+    }
+    /* إخفاء النصوص في الـ collapsed sidebar */
+    section[data-testid="stSidebar"][aria-expanded="false"] * {
+        visibility: hidden !important;
+        opacity: 0 !important;
+    }
+    /* زر الفتح/الإغلاق */
+    [data-testid="collapsedControl"] svg {
+        fill: #6b3fa0 !important;
+    }
+    button[kind="header"] {
+        background: white !important;
+        border-radius: 0 8px 8px 0 !important;
+        box-shadow: 2px 2px 8px rgba(0,0,0,0.1) !important;
     }
     </style>
     """,
@@ -763,7 +790,7 @@ if LOGO_SRC:
                 <img src="{LOGO_SRC}" style="width:60px;height:60px;border-radius:12px;
                 box-shadow:0 4px 12px rgba(0,0,0,0.3);flex-shrink:0;">
                 <div style="text-align:right;">
-                    <h1 style="margin:0;font-size:2rem;">أداة لأتمتة جداول ألف لام ميم</h1>
+                    <h1 style="margin:0;font-size:2rem;">أداة أتمتة جداول مقرأة</h1>
                     <p style="margin:0.3rem 0 0;opacity:0.85;font-size:0.95rem;">
                         ارفعي ملفات Excel أو CSV الخام وستحصلين على جداول منسقة، محمية، وجاهزة للمعلمات
                     </p>
@@ -777,7 +804,7 @@ else:
     st.markdown(
         """
         <div class="hero-header">
-            <h1>📖 أداة لأتمتة جداول ألف لام ميم</h1>
+            <h1>📖 أداة أتمتة جداول مقرأة</h1>
             <p>ارفعي ملفات Excel أو CSV الخام وستحصلين على جداول منسقة، محمية، وجاهزة للمعلمات</p>
         </div>
         """,
@@ -2056,7 +2083,7 @@ st.markdown(
     """
     <hr style="margin:2rem 0 1rem; border-color:#d8c8f0;">
     <div style="text-align:center; color:#999; font-size:0.8rem; font-family:'Tajawal',sans-serif;">
-        أداة أتمتة جداول ألف لام ميم &nbsp;|&nbsp; 📖
+        أداة مقرأة — مبنية بـ Python & Streamlit &nbsp;|&nbsp; 📖
     </div>
     """,
     unsafe_allow_html=True,
