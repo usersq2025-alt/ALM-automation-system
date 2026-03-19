@@ -945,26 +945,26 @@ with st.sidebar:
 if LOGO_SRC:
     st.markdown(
         f"""
-        <div style="position:relative; margin-bottom:1.5rem;">
+        <div style="margin-bottom:1.5rem;">
+            <!-- اللوغو فوق الهيرو -->
+            <div style="display:flex; justify-content:center; margin-bottom:-55px; position:relative; z-index:10;">
+                <div style="
+                    background:white;
+                    border-radius:50%;
+                    padding:12px;
+                    box-shadow:0 8px 32px rgba(0,0,0,0.25), 0 0 0 5px rgba(124,58,237,0.2);
+                    width:120px; height:120px;
+                    display:flex; align-items:center; justify-content:center;
+                ">
+                    <img src="{LOGO_SRC}" style="width:96px;height:96px;border-radius:50%;object-fit:contain;">
+                </div>
+            </div>
             <!-- الهيرو -->
-            <div class="hero-header" style="margin-bottom:0; padding-bottom:2rem;">
+            <div class="hero-header" style="padding-top:4rem;">
                 <h1 style="margin:0;font-size:2rem;">أداة أتمتة جداول مقرأة</h1>
                 <p style="margin:0.4rem 0 0;opacity:0.8;font-size:0.95rem;">
                     ارفعي ملفات Excel أو CSV الخام وستحصلين على جداول منسقة، محمية، وجاهزة للمعلمات
                 </p>
-            </div>
-            <!-- اللوغو يطفو خارج الهيرو -->
-            <div style="display:flex; justify-content:center; margin-top:-45px;">
-                <div style="
-                    background:white;
-                    border-radius:50%;
-                    padding:10px;
-                    box-shadow:0 8px 28px rgba(0,0,0,0.22), 0 0 0 4px rgba(124,58,237,0.15);
-                    width:90px; height:90px;
-                    display:flex; align-items:center; justify-content:center;
-                ">
-                    <img src="{LOGO_SRC}" style="width:72px;height:72px;border-radius:50%;object-fit:contain;">
-                </div>
             </div>
         </div>
         """,
