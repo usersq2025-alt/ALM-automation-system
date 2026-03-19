@@ -945,16 +945,25 @@ with st.sidebar:
 if LOGO_SRC:
     st.markdown(
         f"""
-        <div class="hero-header">
-            <div style="display:flex;align-items:center;justify-content:center;gap:1rem;">
-                <img src="{LOGO_SRC}" style="width:65px;height:65px;border-radius:14px;
-                background:white;padding:6px;
-                box-shadow:0 4px 16px rgba(0,0,0,0.4);flex-shrink:0;">
-                <div style="text-align:right;">
-                    <h1 style="margin:0;font-size:2rem;">أداة أتمتة جداول مقرأة</h1>
-                    <p style="margin:0.3rem 0 0;opacity:0.85;font-size:0.95rem;">
-                        ارفعي ملفات Excel أو CSV الخام وستحصلين على جداول منسقة، محمية، وجاهزة للمعلمات
-                    </p>
+        <div style="position:relative; margin-bottom:1.5rem;">
+            <!-- الهيرو -->
+            <div class="hero-header" style="margin-bottom:0; padding-bottom:2rem;">
+                <h1 style="margin:0;font-size:2rem;">أداة أتمتة جداول مقرأة</h1>
+                <p style="margin:0.4rem 0 0;opacity:0.8;font-size:0.95rem;">
+                    ارفعي ملفات Excel أو CSV الخام وستحصلين على جداول منسقة، محمية، وجاهزة للمعلمات
+                </p>
+            </div>
+            <!-- اللوغو يطفو خارج الهيرو -->
+            <div style="display:flex; justify-content:center; margin-top:-45px;">
+                <div style="
+                    background:white;
+                    border-radius:50%;
+                    padding:10px;
+                    box-shadow:0 8px 28px rgba(0,0,0,0.22), 0 0 0 4px rgba(124,58,237,0.15);
+                    width:90px; height:90px;
+                    display:flex; align-items:center; justify-content:center;
+                ">
+                    <img src="{LOGO_SRC}" style="width:72px;height:72px;border-radius:50%;object-fit:contain;">
                 </div>
             </div>
         </div>
@@ -1119,17 +1128,7 @@ if uploaded_files:
                 use_container_width=True,
             )
 
-else:
-    st.markdown(
-        """
-        <div class="upload-zone">
-            <div style="font-size:3rem; margin-bottom:0.5rem">📂</div>
-            <div style="font-size:1.1rem; font-weight:600; color:#6b3fa0;">لم يتم رفع أي ملفات بعد</div>
-            <div style="font-size:0.85rem; color:#888; margin-top:0.3rem;">يدعم الصيغ: xlsx, xls, csv</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+
 
 
 
