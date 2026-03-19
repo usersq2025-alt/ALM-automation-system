@@ -5,9 +5,22 @@ import zipfile
 import xlsxwriter
 import xml.etree.ElementTree as ET
 
+# ── اللوغو — ضعي ملف logo.png في نفس مجلد app.py ─────────────────────────
+import os, base64
+
+def load_logo_b64(path="logo.png"):
+    """يحوّل الصورة لـ base64 لاستخدامها في HTML"""
+    if os.path.exists(path):
+        with open(path, "rb") as f:
+            return base64.b64encode(f.read()).decode()
+    return None
+
+LOGO_B64 = load_logo_b64()
+LOGO_SRC  = f"data:image/png;base64,{LOGO_B64}" if LOGO_B64 else None
+
 st.set_page_config(
     page_title="أداة مقرأة",
-    page_icon="📖",
+    page_icon="logo.png" if os.path.exists("logo.png") else "📖",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -648,17 +661,32 @@ def process_files(uploaded_files, days, periods, statuses, teacher_map=None):
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown(
-        """
-        <div style='text-align:center; padding:1rem 0 0.5rem;'>
-            <div style='font-size:2.5rem'>📖</div>
-            <div style='font-size:1.2rem; font-weight:900; color:#e8d5f8;'>إعدادات الدورة</div>
-            <div style='font-size:0.8rem; color:#c4a0e8; margin-top:4px;'>خصّصي القيم لكل دورة</div>
-        </div>
-        <hr style='border-color:rgba(168,216,120,0.3); margin:0.8rem 0;'>
-        """,
-        unsafe_allow_html=True,
-    )
+    # ── لوغو السايدبار ────────────────────────────────────────────────────────
+    if LOGO_SRC:
+        st.markdown(
+            f"""
+            <div style='text-align:center; padding:1rem 0 0.3rem;'>
+                <img src="{LOGO_SRC}" style='width:90px; border-radius:12px;
+                box-shadow:0 4px 16px rgba(0,0,0,0.3);'>
+                <div style='font-size:1rem; font-weight:900; color:#e8d5f8; margin-top:0.6rem;'>إعدادات الدورة</div>
+                <div style='font-size:0.78rem; color:#c4a0e8; margin-top:3px;'>خصّصي القيم لكل دورة</div>
+            </div>
+            <hr style='border-color:rgba(255,255,255,0.15); margin:0.8rem 0;'>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            """
+            <div style='text-align:center; padding:1rem 0 0.5rem;'>
+                <div style='font-size:2.5rem'>📖</div>
+                <div style='font-size:1.2rem; font-weight:900; color:#e8d5f8;'>إعدادات الدورة</div>
+                <div style='font-size:0.8rem; color:#c4a0e8; margin-top:4px;'>خصّصي القيم لكل دورة</div>
+            </div>
+            <hr style='border-color:rgba(168,216,120,0.3); margin:0.8rem 0;'>
+            """,
+            unsafe_allow_html=True,
+        )
 
     days_text = st.text_area(
         "📅 أيام الأسبوع",
@@ -726,15 +754,35 @@ with st.sidebar:
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
-st.markdown(
-    """
-    <div class="hero-header">
-        <h1>📖 أداة أتمتة جداول مقرأة</h1>
-        <p>ارفعي ملفات Excel أو CSV الخام وستحصلين على جداول منسقة، محمية، وجاهزة للمعلمات</p>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+# ── Hero مع أو بدون لوغو ──────────────────────────────────────────────────
+if LOGO_SRC:
+    st.markdown(
+        f"""
+        <div class="hero-header">
+            <div style="display:flex;align-items:center;justify-content:center;gap:1rem;">
+                <img src="{LOGO_SRC}" style="width:60px;height:60px;border-radius:12px;
+                box-shadow:0 4px 12px rgba(0,0,0,0.3);flex-shrink:0;">
+                <div style="text-align:right;">
+                    <h1 style="margin:0;font-size:2rem;">أداة أتمتة جداول مقرأة</h1>
+                    <p style="margin:0.3rem 0 0;opacity:0.85;font-size:0.95rem;">
+                        ارفعي ملفات Excel أو CSV الخام وستحصلين على جداول منسقة، محمية، وجاهزة للمعلمات
+                    </p>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+else:
+    st.markdown(
+        """
+        <div class="hero-header">
+            <h1>📖 أداة أتمتة جداول مقرأة</h1>
+            <p>ارفعي ملفات Excel أو CSV الخام وستحصلين على جداول منسقة، محمية، وجاهزة للمعلمات</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 st.markdown("<br>", unsafe_allow_html=True)
 st.markdown(
