@@ -19,7 +19,7 @@ LOGO_B64 = load_logo_b64()
 LOGO_SRC  = f"data:image/png;base64,{LOGO_B64}" if LOGO_B64 else None
 
 st.set_page_config(
-    page_title="أداة مقرأة",
+    page_title="نظام أتمتة - ألف لام ميم",
     page_icon="logo.png" if os.path.exists("logo.png") else "📖",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -763,7 +763,7 @@ if LOGO_SRC:
                 <img src="{LOGO_SRC}" style="width:60px;height:60px;border-radius:12px;
                 box-shadow:0 4px 12px rgba(0,0,0,0.3);flex-shrink:0;">
                 <div style="text-align:right;">
-                    <h1 style="margin:0;font-size:2rem;">أداة أتمتة جداول مقرأة</h1>
+                    <h1 style="margin:0;font-size:2rem;">أداة لأتمتة جداول ألف لام ميم</h1>
                     <p style="margin:0.3rem 0 0;opacity:0.85;font-size:0.95rem;">
                         ارفعي ملفات Excel أو CSV الخام وستحصلين على جداول منسقة، محمية، وجاهزة للمعلمات
                     </p>
@@ -777,7 +777,7 @@ else:
     st.markdown(
         """
         <div class="hero-header">
-            <h1>📖 أداة أتمتة جداول مقرأة</h1>
+            <h1>📖 أداة لأتمتة جداول ألف لام ميم</h1>
             <p>ارفعي ملفات Excel أو CSV الخام وستحصلين على جداول منسقة، محمية، وجاهزة للمعلمات</p>
         </div>
         """,
@@ -2056,7 +2056,7 @@ st.markdown(
     """
     <hr style="margin:2rem 0 1rem; border-color:#d8c8f0;">
     <div style="text-align:center; color:#999; font-size:0.8rem; font-family:'Tajawal',sans-serif;">
-        أداة مقرأة — مبنية بـ Python & Streamlit &nbsp;|&nbsp; 📖
+        أداة أتمتة جداول ألف لام ميم — مبنية بـ Python & Streamlit &nbsp;|&nbsp; 📖
     </div>
     """,
     unsafe_allow_html=True,
