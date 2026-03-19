@@ -787,8 +787,9 @@ if LOGO_SRC:
         f"""
         <div class="hero-header">
             <div style="display:flex;align-items:center;justify-content:center;gap:1rem;">
-                <img src="{LOGO_SRC}" style="width:60px;height:60px;border-radius:12px;
-                box-shadow:0 4px 12px rgba(0,0,0,0.3);flex-shrink:0;">
+                <img src="{LOGO_SRC}" style="width:65px;height:65px;border-radius:14px;
+                background:white;padding:6px;
+                box-shadow:0 4px 16px rgba(0,0,0,0.4);flex-shrink:0;">
                 <div style="text-align:right;">
                     <h1 style="margin:0;font-size:2rem;">أداة أتمتة جداول مقرأة</h1>
                     <p style="margin:0.3rem 0 0;opacity:0.85;font-size:0.95rem;">
