@@ -31,6 +31,166 @@ st.markdown(
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;900&display=swap');
 
     html, body, [class*="css"] { font-family: 'Tajawal', sans-serif; direction: rtl; }
+
+    /* ── خلفية بيضاء ناعمة ── */
+    .stApp { background: #F8F7FC !important; }
+
+    /* ── Hero — بنفسجي داكن فاخر ── */
+    .hero-header {
+        background: linear-gradient(135deg, #1a0533 0%, #3b0f72 60%, #5a1fa8 100%);
+        border-radius: 20px; padding: 2rem 2.5rem; margin-bottom: 1.5rem;
+        box-shadow: 0 12px 40px rgba(26,5,51,0.35); text-align: center; color: white;
+        border: 1px solid rgba(255,255,255,0.08);
+    }
+    .hero-header h1 { font-size: 2.2rem; font-weight: 900; margin: 0; letter-spacing: -0.5px; }
+    .hero-header p  { font-size: 0.95rem; margin: 0.4rem 0 0; opacity: 0.75; font-weight: 300; }
+
+    /* ── بطاقات إحصاء ── */
+    .stat-card {
+        background: white; border-radius: 14px; padding: 1.1rem 1.3rem;
+        box-shadow: 0 2px 14px rgba(0,0,0,0.07); margin-bottom: 1rem;
+        border-top: 3px solid #7c3aed; text-align: center;
+    }
+    .stat-card .number { font-size: 1.9rem; font-weight: 900; color: #3b0f72; line-height: 1; }
+    .stat-card .label  { font-size: 0.8rem; color: #888; margin-top: 5px; font-weight: 500; }
+
+    /* ── File chips ── */
+    .file-chip {
+        display: inline-block; background: #f3f0fc; border: 1px solid #c4b5fd;
+        color: #4c1d95; border-radius: 20px; padding: 3px 13px;
+        font-size: 0.8rem; margin: 3px; font-weight: 600;
+    }
+
+    /* ── بانر نجاح ── */
+    .success-banner {
+        background: linear-gradient(90deg, #f0fdf4, #dcfce7);
+        border: 1.5px solid #86efac; border-radius: 12px;
+        padding: 0.9rem 1.5rem; color: #166534;
+        font-weight: 700; font-size: 1rem; margin: 1rem 0;
+    }
+
+    /* ── عناوين الأقسام ── */
+    .section-title {
+        font-size: 0.95rem; font-weight: 800; color: #3b0f72;
+        padding: 0.45rem 1rem; margin: 1.2rem 0 0.8rem;
+        border-right: 4px solid #7c3aed;
+        background: linear-gradient(90deg, rgba(124,58,237,0.08), transparent);
+        border-radius: 0 10px 10px 0; display: inline-block; width: 100%;
+    }
+
+    /* ── منطقة الرفع ── */
+    .upload-zone {
+        background: white; border: 2px dashed #c4b5fd;
+        border-radius: 16px; padding: 2rem; text-align: center; margin: 1rem 0;
+    }
+
+    /* ── Sidebar ── */
+    [data-testid="stSidebar"] > div:first-child {
+        background: linear-gradient(180deg, #0f0520 0%, #1e0a40 50%, #2d1060 100%) !important;
+    }
+    [data-testid="stSidebar"],
+    [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] span,
+    [data-testid="stSidebar"] div,
+    [data-testid="stSidebar"] label {
+        color: #e2d9f3 !important; font-family: 'Tajawal', sans-serif !important;
+    }
+    [data-testid="stSidebar"] label { font-weight: 700 !important; font-size: 0.88rem !important; }
+    [data-testid="stSidebar"] textarea {
+        background-color: #0a0318 !important; border: 1.5px solid #6d28d9 !important;
+        border-radius: 8px !important; color: #ede9fe !important;
+        font-family: 'Tajawal', sans-serif !important; font-size: 0.88rem !important;
+        direction: rtl !important;
+    }
+    [data-testid="stSidebar"] textarea:focus {
+        border-color: #a78bfa !important; box-shadow: 0 0 0 2px rgba(167,139,250,0.2) !important;
+    }
+    [data-testid="stSidebar"] textarea::placeholder { color: #6d28d9 !important; }
+    [data-testid="stSidebar"] small,
+    [data-testid="stSidebar"] .stMarkdown { color: #a78bfa !important; }
+
+    /* ── Sidebar مطوي ── */
+    [data-testid="collapsedControl"] { display: none !important; }
+    section[data-testid="stSidebar"][aria-expanded="false"] { width: 0 !important; min-width: 0 !important; }
+    section[data-testid="stSidebar"][aria-expanded="false"] * { visibility: hidden !important; opacity: 0 !important; }
+
+    /* ── أزرار ── */
+    .stButton > button {
+        font-family: 'Tajawal', sans-serif !important;
+        font-weight: 700 !important; border-radius: 12px !important;
+        transition: all 0.15s ease !important;
+    }
+    .stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, #3b0f72, #7c3aed) !important;
+        border: none !important; color: white !important;
+        box-shadow: 0 4px 18px rgba(59,15,114,0.4) !important;
+    }
+    .stButton > button[kind="primary"]:hover {
+        transform: translateY(-1px) !important;
+        box-shadow: 0 6px 22px rgba(59,15,114,0.5) !important;
+    }
+    .stButton > button[kind="secondary"] {
+        background: white !important; border: 2px solid #c4b5fd !important;
+        color: #4c1d95 !important;
+    }
+    .stDownloadButton > button {
+        background: linear-gradient(135deg, #1e3a5f, #1d4ed8) !important;
+        color: white !important; font-family: 'Tajawal', sans-serif !important;
+        font-weight: 700 !important; border: none !important;
+        border-radius: 12px !important; font-size: 0.95rem !important;
+        box-shadow: 0 4px 16px rgba(29,78,216,0.35) !important;
+    }
+
+    /* ── Tabs ── */
+    [data-testid="stTabs"] [data-baseweb="tab-list"] {
+        background: white; border-radius: 16px; padding: 6px;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.08); gap: 4px; margin-bottom: 1.5rem;
+    }
+    [data-testid="stTabs"] [data-baseweb="tab"] {
+        border-radius: 11px !important; font-family: 'Tajawal', sans-serif !important;
+        font-weight: 700 !important; font-size: 0.87rem !important;
+        color: #6d28d9 !important; padding: 0.5rem 1rem !important;
+    }
+    [data-testid="stTabs"] [aria-selected="true"] {
+        background: linear-gradient(135deg, #3b0f72, #7c3aed) !important;
+        color: white !important; box-shadow: 0 3px 10px rgba(59,15,114,0.35) !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# ── اللوغو
+import zipfile
+import xlsxwriter
+import xml.etree.ElementTree as ET
+
+# ── اللوغو — ضعي ملف logo.png في نفس مجلد app.py ─────────────────────────
+import os, base64
+
+def load_logo_b64(path="logo.png"):
+    """يحوّل الصورة لـ base64 لاستخدامها في HTML"""
+    if os.path.exists(path):
+        with open(path, "rb") as f:
+            return base64.b64encode(f.read()).decode()
+    return None
+
+LOGO_B64 = load_logo_b64()
+LOGO_SRC  = f"data:image/png;base64,{LOGO_B64}" if LOGO_B64 else None
+
+st.set_page_config(
+    page_title="أداة مقرأة",
+    page_icon="logo.png" if os.path.exists("logo.png") else "📖",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+st.markdown(
+    """
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;900&display=swap');
+
+    html, body, [class*="css"] { font-family: 'Tajawal', sans-serif; direction: rtl; }
     .stApp { background: linear-gradient(135deg, #f3f0f8 0%, #e8e0f0 100%); }
     h1, h2, h3 { font-family: 'Tajawal', sans-serif !important; }
 
@@ -815,8 +975,8 @@ else:
 st.markdown("<br>", unsafe_allow_html=True)
 st.markdown(
     """
-    <div style="background:linear-gradient(135deg,#3d2060,#6b3fa0);border-radius:16px;
-    padding:1.8rem 2.5rem;margin-bottom:1.5rem;box-shadow:0 8px 32px rgba(61,32,96,0.3);
+    <div style="background:linear-gradient(135deg,#064e3b,#065f46,#047857);border-radius:16px;
+    padding:1.8rem 2.5rem;margin-bottom:1.5rem;box-shadow:0 8px 32px rgba(6,78,59,0.35);
     text-align:center;color:white;">
         <div style="font-size:1.8rem;font-weight:900;margin:0;">📋 المرحلة الأولى — توليد جداول المعلمات</div>
         <div style="font-size:0.95rem;margin:0.4rem 0 0;opacity:0.88;">ارفعي ملفات Excel أو CSV الخام لتوليد جداول منسقة وجاهزة للمعلمات</div>
@@ -1586,8 +1746,8 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list, peri
 st.markdown("<br>", unsafe_allow_html=True)
 st.markdown(
     """
-    <div style="background:linear-gradient(135deg,#1a3a5c,#2874a6);border-radius:16px;
-    padding:1.8rem 2.5rem;margin-bottom:1.5rem;box-shadow:0 8px 32px rgba(26,58,92,0.3);
+    <div style="background:linear-gradient(135deg,#1e1b4b,#3730a3,#4338ca);border-radius:16px;
+    padding:1.8rem 2.5rem;margin-bottom:1.5rem;box-shadow:0 8px 32px rgba(30,27,75,0.35);
     text-align:center;color:white;">
         <div style="font-size:1.8rem;font-weight:900;margin:0;">🔄 المرحلة الثانية — مراجعة ملفات المعلمات</div>
         <div style="font-size:0.95rem;margin:0.4rem 0 0;opacity:0.88;">ارفعي الملفات المُعادة من المعلمات لمعالجتها وتدقيقها</div>
@@ -1965,8 +2125,8 @@ def read_existing_stage3(file_bytes):
 st.markdown("<br>", unsafe_allow_html=True)
 st.markdown(
     """
-    <div style="background:linear-gradient(135deg,#1a4e1a,#2e7d32);border-radius:16px;
-    padding:1.8rem 2.5rem;margin-bottom:1.5rem;box-shadow:0 8px 32px rgba(26,78,26,0.3);
+    <div style="background:linear-gradient(135deg,#7c2d12,#9a3412,#c2410c);border-radius:16px;
+    padding:1.8rem 2.5rem;margin-bottom:1.5rem;box-shadow:0 8px 32px rgba(124,45,18,0.35);
     text-align:center;color:white;">
         <div style="font-size:1.8rem;font-weight:900;margin:0;">📊 المرحلة الثالثة — تجميع اللجان</div>
         <div style="font-size:0.95rem;margin:0.4rem 0 0;opacity:0.88;">
