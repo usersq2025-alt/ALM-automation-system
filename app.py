@@ -2056,7 +2056,7 @@ st.markdown(
     """
     <hr style="margin:2rem 0 1rem; border-color:#d8c8f0;">
     <div style="text-align:center; color:#999; font-size:0.8rem; font-family:'Tajawal',sans-serif;">
-        أداة أتمتة جداول ألف لام ميم — &nbsp;|&nbsp; 📖
+        أداة أتمتة جداول ألف لام ميم &nbsp;|&nbsp; 📖
     </div>
     """,
     unsafe_allow_html=True,
