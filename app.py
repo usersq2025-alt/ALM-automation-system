@@ -736,6 +736,19 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+st.markdown("<br>", unsafe_allow_html=True)
+st.markdown(
+    """
+    <div style="background:linear-gradient(135deg,#3d2060,#6b3fa0);border-radius:16px;
+    padding:1.8rem 2.5rem;margin-bottom:1.5rem;box-shadow:0 8px 32px rgba(61,32,96,0.3);
+    text-align:center;color:white;">
+        <div style="font-size:1.8rem;font-weight:900;margin:0;">📋 المرحلة الأولى — توليد جداول المعلمات</div>
+        <div style="font-size:0.95rem;margin:0.4rem 0 0;opacity:0.88;">ارفعي ملفات Excel أو CSV الخام لتوليد جداول منسقة وجاهزة للمعلمات</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
 st.markdown('<div class="section-title">📂 رفع الملفات</div>', unsafe_allow_html=True)
 
 uploaded_files = st.file_uploader(
