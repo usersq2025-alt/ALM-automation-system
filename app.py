@@ -935,7 +935,8 @@ with st.sidebar:
         "border-radius:8px; font-size:0.82rem; color:#c4a0e8;'>"
         "✅ " + str(len(days_list)) + " أيام &nbsp;|&nbsp; ✅ "
         + str(len(periods_list)) + " فترات &nbsp;|&nbsp; ✅ "
-        + str(len(statuses_list)) + " حالة</div>",
+        + str(len(statuses_list)) + " حالة &nbsp;|&nbsp; ✅ "
+        + str(len(period_schedule)) + " أوقات مطابقة</div>",
         unsafe_allow_html=True,
     )
 
@@ -1201,14 +1202,50 @@ NOTES_KEYWORDS = ["تغيير رقم", "تعديل مواليد", "تعديل ا
 
 VALID_MINUTES  = [0, 15, 30, 45]
 
-# تحديد AM/PM لكل فترة (للمطابقة في نظام 12 ساعة)
-PERIOD_AMPM = {
-    "فجراً":  "AM",
-    "ضحى":    "AM",
-    "ظهراً":  "AM",
-    "عصراً":  "PM",
-    "ليلاً":  "PM",
-}
+def resolve_period_for_time(fixed_time, period_schedule, hinted_period=None):
+    """
+    يطابق وقتاً بصيغة H:MM مع جدول الفترات اليدوي.
+    يدعم أوقات 12 ساعة بدون AM/PM بتجربة h و h+12.
+    يُرجع: (اسم_الفترة_الصحيحة أو None, هل_تطابق_الفترة_المكتوبة)
+    """
+    if not fixed_time or not period_schedule:
+        return None, True
+    try:
+        parts = str(fixed_time).strip().split(":")
+        h = int(parts[0])
+        m = int(parts[1]) if len(parts) > 1 else 0
+    except Exception:
+        return None, True
+
+    candidates = [h * 60 + m]
+    if 1 <= h <= 11:
+        candidates.append((h + 12) * 60 + m)
+
+    def period_at(mins):
+        for name, start, end in period_schedule:
+            if start <= mins <= end:
+                return name
+        return None
+
+    # إن وُجدت فترة مكتوبة: فضّل التفسير الذي يقع داخلها
+    if hinted_period:
+        for mins in candidates:
+            for name, start, end in period_schedule:
+                if name == hinted_period and start <= mins <= end:
+                    return hinted_period, True
+
+    matches = []
+    for mins in candidates:
+        found = period_at(mins)
+        if found:
+            matches.append(found)
+
+    if not matches:
+        return None, False if hinted_period else True
+
+    # عند الغموض (صباح/مساء): فضّل التفسير المسائي (h+12) لأنه الأقرب لسياق الاختبارات
+    chosen = matches[-1]
+    return chosen, (chosen == hinted_period) if hinted_period else True
 
 
 def analyze_day_distribution(students_df, days_list, day_col, status_col):
@@ -1253,18 +1290,24 @@ def analyze_day_distribution(students_df, days_list, day_col, status_col):
                 unassigned += 1
 
     # بناء تقرير لكل يوم
+    # مناسب فقط عند التطابق التام؛ الضغط والنقص كلاهما يحتاج تدخل
     days_report = {}
     has_issue   = False
     for day in days_list:
         a = actual.get(day, 0)
         i = ideal.get(day, 0)
-        status = "✅ مناسب"
         if a > i:
             status = "🔴 ضغط — يجب تحويل " + str(a - i) + " طالبة"
             has_issue = True
-        elif a < i and unassigned > 0:
-            status = "🟢 متاح — يستوعب " + str(i - a) + " طالبة إضافية"
+        elif a < i:
+            status = "🟡 نقص — يحتاج " + str(i - a) + " طالبة"
+            has_issue = True
+        else:
+            status = "✅ مناسب"
         days_report[day] = {"actual": a, "ideal": i, "status": status}
+
+    if unassigned > 0:
+        has_issue = True
 
     return {
         "total":      total,
@@ -1297,6 +1340,26 @@ def excel_serial_to_time_str(val):
 
 
 
+def _safe_sheet_name(base_name, used_names):
+    """اسم ورقة Excel صالح وفريد (حد 31 حرفاً، بدون أحرف محظورة)."""
+    cleaned = str(base_name or "معلمة").strip()
+    for ch in ('\\', '/', '?', '*', '[', ']', ':'):
+        cleaned = cleaned.replace(ch, " ")
+    cleaned = " ".join(cleaned.split()) or "معلمة"
+    candidate = cleaned[:31]
+    if candidate not in used_names:
+        used_names.add(candidate)
+        return candidate
+    i = 2
+    while True:
+        suffix = f" ({i})"
+        candidate = cleaned[: 31 - len(suffix)] + suffix
+        if candidate not in used_names:
+            used_names.add(candidate)
+            return candidate
+        i += 1
+
+
 def build_distribution_report(day_reports):
     """
     يبني ملف Excel واحد يحتوي:
@@ -1318,7 +1381,7 @@ def build_distribution_report(day_reports):
     hdr_fmt.set_font_color("white")
     ok_fmt   = fmt()
     red_fmt  = fmt(bg="#FF9999")
-    grn_fmt  = fmt(bg="#C6EFCE")
+    yel_fmt  = fmt(bg="#FFE699")
     bold_fmt = fmt(bold=True, align="right")
     title_fmt = workbook.add_format({"bold": True, "font_name": "Calibri",
                                      "font_size": 13, "align": "center",
@@ -1330,21 +1393,22 @@ def build_distribution_report(day_reports):
     ws_sum.set_column(0, 0, 25)   # المعلمة
     ws_sum.set_column(1, 1, 10)   # إجمالي
     ws_sum.set_column(2, 2, 10)   # بدون يوم
-    ws_sum.set_column(3, 3, 12)   # فيها ضغط
-    ws_sum.set_column(4, 4, 15)   # الحالة العامة
+    ws_sum.set_column(3, 3, 12)   # أيام مكتظة
+    ws_sum.set_column(4, 4, 12)   # أيام ناقصة
+    ws_sum.set_column(5, 5, 15)   # الحالة العامة
 
-    ws_sum.merge_range(0, 0, 0, 4, "ملخص توزيع الأيام — جميع المعلمات", title_fmt)
+    ws_sum.merge_range(0, 0, 0, 5, "ملخص توزيع الأيام — جميع المعلمات", title_fmt)
     ws_sum.set_row(0, 25)
 
-    for ci, h in enumerate(["المعلمة", "أنهين المقرر", "بدون يوم", "أيام مكتظة", "الحالة"]):
+    for ci, h in enumerate(["المعلمة", "أنهين المقرر", "بدون يوم", "أيام مكتظة", "أيام ناقصة", "الحالة"]):
         ws_sum.write(1, ci, h, hdr_fmt)
 
-    for ri, (fname, report) in enumerate(day_reports.items()):
+    for ri, (teacher, report) in enumerate(day_reports.items()):
         r          = ri + 2
-        teacher    = fname.replace(".xlsx", "")
         total      = report.get("total", 0)
         unassigned = report.get("unassigned", 0)
         over_days  = sum(1 for d in report.get("days", {}).values() if "🔴" in d["status"])
+        under_days = sum(1 for d in report.get("days", {}).values() if "🟡" in d["status"])
         has_issue  = report.get("has_issue", False) or unassigned > 0
 
         row_fmt = red_fmt if has_issue else ok_fmt
@@ -1353,13 +1417,13 @@ def build_distribution_report(day_reports):
         ws_sum.write(r, 1, total,      row_fmt)
         ws_sum.write(r, 2, unassigned, red_fmt if unassigned else ok_fmt)
         ws_sum.write(r, 3, over_days,  red_fmt if over_days  else ok_fmt)
-        ws_sum.write(r, 4, status_txt, row_fmt)
+        ws_sum.write(r, 4, under_days, yel_fmt if under_days else ok_fmt)
+        ws_sum.write(r, 5, status_txt, row_fmt)
 
     # ── ورقة لكل معلمة ───────────────────────────────────────────────────────
-    for fname, report in day_reports.items():
-        teacher  = fname.replace(".xlsx", "")
-        # اسم الورقة: أول 31 حرف (حد Excel)
-        sh_name  = teacher[:31]
+    used_sheet_names = {"ملخص"}
+    for teacher, report in day_reports.items():
+        sh_name  = _safe_sheet_name(teacher, used_sheet_names)
         ws       = workbook.add_worksheet(sh_name)
         ws.right_to_left()
         ws.set_column(0, 0, 22)
@@ -1393,8 +1457,8 @@ def build_distribution_report(day_reports):
         for ri, (day, info) in enumerate(report.get("days", {}).items()):
             r       = ri + 6
             is_over = "🔴" in info["status"]
-            is_avail= "🟢" in info["status"]
-            df      = red_fmt if is_over else (grn_fmt if is_avail else ok_fmt)
+            is_under= "🟡" in info["status"]
+            df      = red_fmt if is_over else (yel_fmt if is_under else ok_fmt)
             ws.write(r, 0, day,            df)
             ws.write(r, 1, info["actual"], df)
             ws.write(r, 2, info["ideal"],  df)
@@ -1454,16 +1518,19 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list, peri
         "time":    next((c for c in df.columns if "توقيت الاختبار" in str(c)), None),
         "period":  next((c for c in df.columns if "الفترة"         in str(c)), None),
         "notes":   next((c for c in df.columns if "الملاحظات"      in str(c)), None),
-        "teacher": next((c for c in df.columns if "المعلمة"        in str(c)), None),
+        "teacher": next(
+            (c for c in df.columns if str(c).strip() in ("اسم المعلمة", "المعلمة")),
+            next((c for c in df.columns if "المعلمة" in str(c)), None),
+        ),
     }
 
-    # اسم الملف الناتج = قيمة عمود المعلمة
+    # اسم المعلمة الحقيقي من العمود (الأكثر تكراراً)، وليس من اسم الملف
     teacher_col_val = ""
     if col_map["teacher"]:
         vals = df[col_map["teacher"]].dropna().astype(str).str.strip()
-        vals = vals[vals != ""]
+        vals = vals[(vals != "") & (vals.str.lower() != "nan")]
         if not vals.empty:
-            teacher_col_val = vals.iloc[0]
+            teacher_col_val = vals.mode().iloc[0] if not vals.mode().empty else vals.iloc[0]
 
     columns_order = [
         "الرقم", "الاسم", "رقم الواتس اب", "المجموعة",
@@ -1486,12 +1553,19 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list, peri
     shurty_rows         = []   # شرطي فقط → خلية الحالة أصفر
     note_rows           = []   # ملاحظة جوهرية فقط → خلية الاسم أحمر
     both_rows           = []   # شرطي + جوهرية → خلية الحالة أصفر + خلية الاسم أحمر
-    empty_status_rows   = []
-    wrong_data_rows     = []
+    # خلايا صفراء لنواقص/أخطاء البيانات: {row_idx: set(أسماء الأعمدة)}
+    yellow_cells        = {}
     time_format_errors  = []   # توقيت بتنسيق تاريخ خاطئ
     period_mismatch_rows = []  # فترة لا تتطابق مع الوقت
 
     STATUS_FINISHED = "أنهت المقرر"
+
+    def mark_yellow(row_i, col_name):
+        yellow_cells.setdefault(row_i, set()).add(col_name)
+
+    def is_blank(val):
+        s = str(val).strip() if val is not None else ""
+        return (not s) or s.lower() == "nan"
 
     for idx, row in df.iterrows():
         status   = str(row.get(col_map["status"] or "الحالة",          "")).strip()
@@ -1500,59 +1574,54 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list, peri
         time_raw = row.get(col_map["time"]        or "توقيت الاختبار", "")
         period   = str(row.get(col_map["period"]  or "الفترة",         "")).strip()
 
-        # تحقق من تنسيق التوقيت — قيمة > 1 تعني تاريخ وليس ساعة
+        # تحقق من تنسيق التوقيت — قيمة عددية >= 1 تعني تاريخ وليس ساعة H:MM
         try:
-            fval = float(str(time_raw).strip())
-            if fval >= 1:
-                time_format_errors.append((idx, str(time_raw)))
+            raw_s = str(time_raw).strip()
+            if raw_s and ":" not in raw_s.replace(".", ":"):
+                fval = float(raw_s)
+                if fval >= 1:
+                    time_format_errors.append((idx, str(time_raw)))
         except (ValueError, TypeError):
             pass
 
-        # تصحيح الوقت وتخزينه
+        # تصحيح الوقت وتخزينه كنص H:MM (مثل 1:45 / 8:30)
         fixed_time = fix_time_minutes(time_raw)
-        if col_map["time"] and fixed_time:
+        has_time = bool(fixed_time) and not is_blank(fixed_time)
+        if col_map["time"] and has_time:
             df.at[idx, col_map["time"]] = fixed_time
-
-        # مطابقة الفترة مع الوقت (نظام 12 ساعة — الفترة تحدد AM/PM)
-        if period_schedule and fixed_time and period:
-            try:
-                t_parts = fixed_time.split(":")
-                h = int(t_parts[0])
-                m = int(t_parts[1]) if len(t_parts) > 1 else 0
-                # استخدم الفترة لتحديد AM/PM
-                ampm = PERIOD_AMPM.get(period, "AM")
-                if ampm == "PM" and h < 12:
-                    h += 12
-                t_min = h * 60 + m
-                correct_period = None
-                for p_name, p_start, p_end in period_schedule:
-                    if p_start <= t_min <= p_end:
-                        correct_period = p_name
-                        break
-                if correct_period and correct_period != period:
-                    period_mismatch_rows.append((idx, period, correct_period))
-            except Exception:
-                pass
 
         # تخطي الصفوف الفارغة كلياً (بعد نهاية البيانات)
         name_val = str(row.get("الاسم", "")).strip()
         if not name_val or name_val == "nan":
             continue
 
-        # حالة فارغة لكن الاسم موجود
-        if not status or status == "nan":
-            empty_status_rows.append(idx)
-            continue
-
-        # منطق البيانات
-        if status == STATUS_FINISHED:
-            if not day or day == "nan":
-                wrong_data_rows.append(idx)
+        # الحالة إلزامية لكل الطالبات — تلوين خلية الحالة فقط
+        if is_blank(status):
+            mark_yellow(idx, "الحالة")
+        elif status == STATUS_FINISHED:
+            # أنهت المقرر: يوم + فترة إلزاميان، التوقيت اختياري
+            if is_blank(day):
+                mark_yellow(idx, "يوم الاختبار")
+            if is_blank(period):
+                mark_yellow(idx, "الفترة")
+            # مطابقة التوقيت مع الفترة من المربع اليدوي (إن وُجد التوقيت)
+            elif has_time and period_schedule:
+                correct_period, matched = resolve_period_for_time(
+                    fixed_time, period_schedule, hinted_period=period
+                )
+                if not matched:
+                    mark_yellow(idx, "الفترة")
+                    period_mismatch_rows.append(
+                        (idx, period, correct_period or "—")
+                    )
         else:
-            if ((day and day != "nan") or
-                    (fixed_time and str(fixed_time).strip() != "") or
-                    (period and period != "nan")):
-                wrong_data_rows.append(idx)
+            # ليست «أنهت المقرر»: لا داعي ليوم/وقت/فترة — إن وُجدت تُلوَّن الخلية فقط
+            if not is_blank(day):
+                mark_yellow(idx, "يوم الاختبار")
+            if has_time:
+                mark_yellow(idx, "توقيت الاختبار")
+            if not is_blank(period):
+                mark_yellow(idx, "الفترة")
 
         # منطق الألوان — كاميرا لها أولوية قصوى
         has_camera = KEYWORD_CAMERA in note
@@ -1604,14 +1673,6 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list, peri
     yellow_time   = fmt({"bg_color": COLOR_YELLOW, "num_format": "h:mm"})
     # ملاحظة جوهرية — خلية الاسم أحمر
     red_cell      = fmt({"bg_color": COLOR_RED})
-    # بيانات خاطئة — صف كامل أصفر
-    warn_fmt      = fmt({"bg_color": COLOR_YELLOW})
-    warn_num      = fmt({"bg_color": COLOR_YELLOW, "num_format": "0"})
-    warn_phone    = fmt({"bg_color": COLOR_YELLOW, "num_format": "0"})
-    warn_time     = fmt({"bg_color": COLOR_YELLOW, "num_format": "h:mm"})
-    warn_arial    = fmt({"bg_color": COLOR_YELLOW, "font_name": "Arial"})
-    # تعارض فترة — خلية الفترة أصفر
-    yellow_period = fmt({"bg_color": COLOR_YELLOW, "font_name": "Arial"})
 
     col_widths = [7, 24, 14.1, 13.3, 7, 6, 5.3, 6.9, 19.8, 11.4, 10.7, 14, 39.8]
     for i, w in enumerate(col_widths):
@@ -1620,15 +1681,13 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list, peri
     for ci, cn in enumerate(columns_order):
         ws.write(0, ci, cn, header_fmt)
 
-    numeric_cols = {"الرقم", "رقم الواتس اب", "المواليد"}
-
     for row_idx, row in df_out.iterrows():
         er        = row_idx + 1
         is_camera = row_idx in camera_rows
         is_shurty = row_idx in shurty_rows
         is_note   = row_idx in note_rows
         is_both   = row_idx in both_rows
-        is_warn   = row_idx in empty_status_rows or row_idx in wrong_data_rows
+        warn_cols = yellow_cells.get(row_idx, set())
 
         for ci, cn in enumerate(columns_order):
             val = row[cn]
@@ -1636,24 +1695,15 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list, peri
 
             def write_cell(f, phone_f=None, time_f=None):
                 if cn == "رقم الواتس اب" and val != "":
-                    # واتساب: Number بدون فواصل (write_number + num_format "0")
                     use_f = phone_f if phone_f else f
                     try:
                         ws.write_number(er, ci, int(float(str(val).replace(".0",""))), use_f)
                     except Exception:
                         ws.write(er, ci, str(val), use_f)
                 elif cn == "توقيت الاختبار" and val != "":
-                    # وقت: serial مع h:mm أو نص إذا لم يكن serial
+                    # دائماً كنص H:MM مثل 1:45 / 8:30
                     use_f = time_f if time_f else f
-                    try:
-                        fval = float(str(val).replace(".0","")) if ":" not in str(val) else None
-                        if fval is not None and 0 < fval < 1:
-                            ws.write_number(er, ci, fval, use_f)
-                        else:
-                            # نص وقت مثل "9:30" — اكتبه كنص
-                            ws.write_string(er, ci, str(val), use_f)
-                    except Exception:
-                        ws.write_string(er, ci, str(val), use_f)
+                    ws.write_string(er, ci, str(val), use_f)
                 elif cn in {"الرقم", "المواليد"} and val != "":
                     try:
                         ws.write_number(er, ci, int(str(val).replace(".0", "")), f)
@@ -1679,37 +1729,31 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list, peri
 
             elif is_both:
                 # شرطي + جوهرية: خلية الحالة أصفر + خلية الاسم أحمر + باقي عادي
-                if cn == "الحالة":
-                    write_cell(yellow_cell)
+                # مع الإبقاء على تلوين نواقص البيانات في خلاياها
+                if cn == "الحالة" or cn in warn_cols:
+                    write_cell(yellow_cell, time_f=yellow_time)
                 elif cn == "الاسم":
                     write_cell(red_cell)
                 else:
                     write_cell(normal_f(), phone_f=phone_fmt, time_f=time_fmt)
 
             elif is_shurty:
-                # خلية الحالة فقط أصفر
-                if cn == "الحالة":
-                    write_cell(yellow_cell)
+                if cn == "الحالة" or cn in warn_cols:
+                    write_cell(yellow_cell, time_f=yellow_time)
                 else:
                     write_cell(normal_f())
 
             elif is_note:
-                # خلية الاسم فقط أحمر
-                if cn == "الاسم":
+                if cn in warn_cols:
+                    write_cell(yellow_cell, time_f=yellow_time)
+                elif cn == "الاسم":
                     write_cell(red_cell)
                 else:
                     write_cell(normal_f())
 
-            elif row_idx in [i for i, *_ in period_mismatch_rows]:
-                # فترة لا تتطابق — خلية الفترة أصفر فقط
-                if cn == "الفترة":
-                    write_cell(yellow_cell)
-                else:
-                    write_cell(normal_f())
-
-            elif is_warn:
-                # صف كامل أصفر
-                write_cell(warn_fmt, phone_f=warn_phone, time_f=warn_time)
+            elif cn in warn_cols:
+                # نقص/خطأ بيانات أو عدم تطابق فترة — الخلية المعنية فقط
+                write_cell(yellow_cell, time_f=yellow_time)
 
             else:
                 write_cell(normal_f())
@@ -1736,8 +1780,9 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list, peri
     workbook.close()
     output.seek(0)
     n_colored = len(camera_rows) + len(shurty_rows) + len(note_rows) + len(both_rows)
+    n_issues  = len(yellow_cells)
     return (output.read(), n_colored, 0,
-            len(empty_status_rows) + len(wrong_data_rows), day_report,
+            n_issues, day_report,
             time_format_errors, period_mismatch_rows, teacher_col_val)
 
 
@@ -1780,7 +1825,7 @@ if uploaded_stage2:
             <span style="background:#FF9999;padding:2px 10px;border-radius:4px;">🔴 كاميرا — صف كامل</span> &nbsp;
             <span style="background:#FF9999;padding:2px 10px;border-radius:4px;">🔴 ملاحظة جوهرية — خلية الاسم</span> &nbsp;
             <span style="background:#FFFF99;padding:2px 10px;border-radius:4px;">🟡 شرطي — خلية الحالة</span> &nbsp;
-            <span style="background:#FFFF99;padding:2px 10px;border-radius:4px;">🟡 بيانات خاطئة — صف كامل</span>
+            <span style="background:#FFFF99;padding:2px 10px;border-radius:4px;">🟡 نقص/عدم تطابق — الخلية فقط</span>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1801,17 +1846,25 @@ if uploaded_stage2:
                     out_bytes, n_colored, _, n_issues, d_report, t_errors, p_mismatches, teacher_name = process_stage2_file(
                         fb, days_list, statuses_list, periods_list, period_schedule
                     )
-                    # اسم الملف = اسم المعلمة من العمود، وإلا اسم الملف الأصلي
-                    out_name = (teacher_name + ".xlsx") if teacher_name else uf.name
+                    # اسم العرض = اسم المعلمة من العمود، وإلا اسم الملف (بدون الامتداد)
+                    display_name = teacher_name.strip() if teacher_name else uf.name.rsplit(".", 1)[0]
+                    # تجنّب الكتابة فوق ملف/تقرير عند تكرار الاسم
+                    unique_name = display_name
+                    n = 2
+                    while (unique_name + ".xlsx") in stage2_results or unique_name in day_reports:
+                        unique_name = f"{display_name} ({n})"
+                        n += 1
+                    out_name = unique_name + ".xlsx"
                     stage2_results[out_name] = out_bytes
                     total_red    += n_colored
                     total_issues += n_issues
-                    if d_report.get("has_issue") or d_report.get("unassigned", 0) > 0:
-                        day_reports[uf.name] = d_report
+                    # إدراج كل الملفات في التقرير (وليس فقط ذات المشاكل)
+                    if d_report:
+                        day_reports[unique_name] = d_report
                     if t_errors:
-                        time_fmt_warnings[uf.name] = t_errors
+                        time_fmt_warnings[unique_name] = t_errors
                     if p_mismatches:
-                        period_warnings[uf.name] = p_mismatches
+                        period_warnings[unique_name] = p_mismatches
                 except Exception as e:
                     stage2_errors.append("❌ " + uf.name + ": " + str(e))
 
@@ -1847,7 +1900,12 @@ if uploaded_stage2:
             with cols2[2]:
                 st.markdown('<div class="stat-card"><div class="number" style="color:#b7950b">' + str(total_issues) + '</div><div class="label">يحتاج مراجعة 🟡</div></div>', unsafe_allow_html=True)
             with cols2[3]:
-                st.markdown('<div class="stat-card"><div class="number" style="color:#555">' + str(sum(len(r["days"]) for r in day_reports.values())) + '</div><div class="label">أيام مكتظة 📊</div></div>', unsafe_allow_html=True)
+                under_or_over = sum(
+                    1 for r in day_reports.values()
+                    for d in r.get("days", {}).values()
+                    if "🔴" in d["status"] or "🟡" in d["status"]
+                )
+                st.markdown('<div class="stat-card"><div class="number" style="color:#555">' + str(under_or_over) + '</div><div class="label">أيام غير متوازنة 📊</div></div>', unsafe_allow_html=True)
 
             # ── تقرير توزيع الأيام — ملف Excel واحد ──────────────────────────
             if day_reports:
@@ -1857,8 +1915,9 @@ if uploaded_stage2:
                     for r in day_reports.values()
                 )
                 st.markdown('<div class="section-title">📊 تقرير توزيع الأيام</div>', unsafe_allow_html=True)
+                st.caption(f"يشمل التقرير {len(day_reports)} معلمة من أصل {len(stage2_results)} ملف مرفوع")
                 if has_any_issue:
-                    st.warning("⚠️ يوجد أيام مكتظة أو طالبات بدون يوم — راجعي التقرير")
+                    st.warning("⚠️ يوجد أيام مكتظة أو ناقصة أو طالبات بدون يوم — راجعي التقرير")
                 else:
                     st.success("✅ التوزيع متوازن لدى جميع المعلمات")
                 st.download_button(
