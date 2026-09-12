@@ -1392,15 +1392,14 @@ def build_distribution_report(day_reports):
     ws_sum.right_to_left()
     ws_sum.set_column(0, 0, 25)   # المعلمة
     ws_sum.set_column(1, 1, 10)   # إجمالي
-    ws_sum.set_column(2, 2, 10)   # بدون يوم
-    ws_sum.set_column(3, 3, 12)   # أيام مكتظة
-    ws_sum.set_column(4, 4, 12)   # أيام ناقصة
-    ws_sum.set_column(5, 5, 15)   # الحالة العامة
+    ws_sum.set_column(2, 2, 12)   # أيام مكتظة
+    ws_sum.set_column(3, 3, 12)   # أيام ناقصة
+    ws_sum.set_column(4, 4, 15)   # الحالة العامة
 
-    ws_sum.merge_range(0, 0, 0, 5, "ملخص توزيع الأيام — جميع المعلمات", title_fmt)
+    ws_sum.merge_range(0, 0, 0, 4, "ملخص توزيع الأيام — جميع المعلمات", title_fmt)
     ws_sum.set_row(0, 25)
 
-    for ci, h in enumerate(["المعلمة", "أنهين المقرر", "بدون يوم", "أيام مكتظة", "أيام ناقصة", "الحالة"]):
+    for ci, h in enumerate(["المعلمة", "أنهين المقرر", "أيام مكتظة", "أيام ناقصة", "الحالة"]):
         ws_sum.write(1, ci, h, hdr_fmt)
 
     for ri, (teacher, report) in enumerate(day_reports.items()):
@@ -1415,10 +1414,9 @@ def build_distribution_report(day_reports):
         status_txt = "⚠️ يحتاج تدخل" if has_issue else "✅ موزّع بشكل جيد"
         ws_sum.write(r, 0, teacher,    row_fmt)
         ws_sum.write(r, 1, total,      row_fmt)
-        ws_sum.write(r, 2, unassigned, red_fmt if unassigned else ok_fmt)
-        ws_sum.write(r, 3, over_days,  red_fmt if over_days  else ok_fmt)
-        ws_sum.write(r, 4, under_days, yel_fmt if under_days else ok_fmt)
-        ws_sum.write(r, 5, status_txt, row_fmt)
+        ws_sum.write(r, 2, over_days,  red_fmt if over_days  else ok_fmt)
+        ws_sum.write(r, 3, under_days, yel_fmt if under_days else ok_fmt)
+        ws_sum.write(r, 4, status_txt, row_fmt)
 
     # ── ورقة لكل معلمة ───────────────────────────────────────────────────────
     used_sheet_names = {"ملخص"}
