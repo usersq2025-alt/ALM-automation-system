@@ -1192,10 +1192,26 @@ PERIOD_SCHEDULE = [
 
 KEYWORD_RED    = "شرطي"
 KEYWORD_CAMERA = "كاميرا"
-COLOR_RED      = "#FF9999"
-COLOR_ORANGE   = "#FFD580"
-COLOR_YELLOW   = "#FFFF99"
+COLOR_RED      = "#FF9999"   # كاميرا — صف كامل
+COLOR_ORANGE   = "#FFB347"   # ملاحظة جوهرية — خلية الاسم
+COLOR_YELLOW   = "#FFFF99"   # شرطي فقط — خلية الحالة
+COLOR_PURPLE   = "#D7BDE2"   # حالة فارغة — خلية الحالة
+COLOR_BLUE     = "#AED6F1"   # نقص يوم/فترة إلزامي — الخلية الناقصة
+COLOR_TEAL     = "#76D7C4"   # عدم تطابق الفترة مع الوقت — خلية الفترة
+COLOR_PINK     = "#F5B7B1"   # حقول اختبار غير مطلوبة — الخلية الزائدة
 COLOR_HEADER   = "#D9D9D9"
+
+ISSUE_EMPTY_STATUS    = "empty_status"
+ISSUE_MISSING         = "missing"
+ISSUE_PERIOD_MISMATCH = "period_mismatch"
+ISSUE_UNEXPECTED      = "unexpected"
+
+ISSUE_COLORS = {
+    ISSUE_EMPTY_STATUS:    COLOR_PURPLE,
+    ISSUE_MISSING:         COLOR_BLUE,
+    ISSUE_PERIOD_MISMATCH: COLOR_TEAL,
+    ISSUE_UNEXPECTED:      COLOR_PINK,
+}
 
 NOTES_KEYWORDS = ["تغيير رقم", "تعديل مواليد", "تعديل اسم", "تغيير اسم",
                   "تصحيح رقم", "تصحيح اسم", "تصحيح مواليد"]
@@ -1549,17 +1565,17 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list, peri
     # ── فحص كل صف ────────────────────────────────────────────────────────────
     camera_rows         = []   # كاميرا  → صف كامل أحمر
     shurty_rows         = []   # شرطي فقط → خلية الحالة أصفر
-    note_rows           = []   # ملاحظة جوهرية فقط → خلية الاسم أحمر
-    both_rows           = []   # شرطي + جوهرية → خلية الحالة أصفر + خلية الاسم أحمر
-    # خلايا صفراء لنواقص/أخطاء البيانات: {row_idx: set(أسماء الأعمدة)}
-    yellow_cells        = {}
-    time_format_errors  = []   # توقيت بتنسيق تاريخ خاطئ
-    period_mismatch_rows = []  # فترة لا تتطابق مع الوقت
+    note_rows           = []   # ملاحظة جوهرية فقط → خلية الاسم برتقالي
+    both_rows           = []   # شرطي + جوهرية → حالة أصفر + اسم برتقالي
+    # خلايا المشاكل: {row_idx: {col_name: issue_type}}
+    issue_cells         = {}
+    time_format_errors  = []
+    period_mismatch_rows = []
 
     STATUS_FINISHED = "أنهت المقرر"
 
-    def mark_yellow(row_i, col_name):
-        yellow_cells.setdefault(row_i, set()).add(col_name)
+    def mark_issue(row_i, col_name, issue_type):
+        issue_cells.setdefault(row_i, {})[col_name] = issue_type
 
     def is_blank(val):
         s = str(val).strip() if val is not None else ""
@@ -1593,35 +1609,34 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list, peri
         if not name_val or name_val == "nan":
             continue
 
-        # الحالة إلزامية لكل الطالبات — تلوين خلية الحالة فقط
+        # الحالة إلزامية لكل الطالبات
         if is_blank(status):
-            mark_yellow(idx, "الحالة")
+            mark_issue(idx, "الحالة", ISSUE_EMPTY_STATUS)
         elif status == STATUS_FINISHED:
             # أنهت المقرر: يوم + فترة إلزاميان، التوقيت اختياري
             if is_blank(day):
-                mark_yellow(idx, "يوم الاختبار")
+                mark_issue(idx, "يوم الاختبار", ISSUE_MISSING)
             if is_blank(period):
-                mark_yellow(idx, "الفترة")
-            # مطابقة التوقيت مع الفترة من المربع اليدوي (إن وُجد التوقيت)
+                mark_issue(idx, "الفترة", ISSUE_MISSING)
             elif has_time and period_schedule:
                 correct_period, matched = resolve_period_for_time(
                     fixed_time, period_schedule, hinted_period=period
                 )
                 if not matched:
-                    mark_yellow(idx, "الفترة")
+                    mark_issue(idx, "الفترة", ISSUE_PERIOD_MISMATCH)
                     period_mismatch_rows.append(
                         (idx, period, correct_period or "—")
                     )
         else:
-            # ليست «أنهت المقرر»: لا داعي ليوم/وقت/فترة — إن وُجدت تُلوَّن الخلية فقط
+            # ليست «أنهت المقرر»: لا داعي ليوم/وقت/فترة
             if not is_blank(day):
-                mark_yellow(idx, "يوم الاختبار")
+                mark_issue(idx, "يوم الاختبار", ISSUE_UNEXPECTED)
             if has_time:
-                mark_yellow(idx, "توقيت الاختبار")
+                mark_issue(idx, "توقيت الاختبار", ISSUE_UNEXPECTED)
             if not is_blank(period):
-                mark_yellow(idx, "الفترة")
+                mark_issue(idx, "الفترة", ISSUE_UNEXPECTED)
 
-        # منطق الألوان — كاميرا لها أولوية قصوى
+        # منطق ألوان الملاحظات — كاميرا لها أولوية قصوى
         has_camera = KEYWORD_CAMERA in note
         has_shurty = KEYWORD_RED    in note
         has_note   = any(kw in note for kw in NOTES_KEYWORDS)
@@ -1656,21 +1671,26 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list, peri
         "border": 1, "bg_color": COLOR_HEADER, "locked": False,
     })
     normal_fmt  = fmt()
-    num_fmt     = fmt({"num_format": "0"})           # أرقام عامة
-    phone_fmt   = fmt({"num_format": "0"})           # واتساب: Number بدون فواصل
-    time_fmt    = fmt({"num_format": "h:mm"})        # وقت: Custom h:mm
+    num_fmt     = fmt({"num_format": "0"})
+    phone_fmt   = fmt({"num_format": "0"})
+    time_fmt    = fmt({"num_format": "h:mm"})
     arial_fmt   = fmt({"font_name": "Arial"})
     # كاميرا — صف كامل أحمر
     cam_fmt       = fmt({"bg_color": COLOR_RED})
-    cam_num       = fmt({"bg_color": COLOR_RED, "num_format": "0"})
     cam_phone     = fmt({"bg_color": COLOR_RED, "num_format": "0"})
     cam_time      = fmt({"bg_color": COLOR_RED, "num_format": "h:mm"})
-    cam_arial     = fmt({"bg_color": COLOR_RED, "font_name": "Arial"})
-    # شرطي — خلية الحالة أصفر
+    # شرطي — أصفر فقط
     yellow_cell   = fmt({"bg_color": COLOR_YELLOW})
-    yellow_time   = fmt({"bg_color": COLOR_YELLOW, "num_format": "h:mm"})
-    # ملاحظة جوهرية — خلية الاسم أحمر
-    red_cell      = fmt({"bg_color": COLOR_RED})
+    # ملاحظة جوهرية — برتقالي (مميز عن الكاميرا)
+    note_name_fmt = fmt({"bg_color": COLOR_ORANGE})
+    # صيغ المشاكل حسب النوع
+    issue_fmts = {
+        itype: {
+            "cell": fmt({"bg_color": color}),
+            "time": fmt({"bg_color": color, "num_format": "h:mm"}),
+        }
+        for itype, color in ISSUE_COLORS.items()
+    }
 
     col_widths = [7, 24, 14.1, 13.3, 7, 6, 5.3, 6.9, 19.8, 11.4, 10.7, 14, 39.8]
     for i, w in enumerate(col_widths):
@@ -1685,7 +1705,7 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list, peri
         is_shurty = row_idx in shurty_rows
         is_note   = row_idx in note_rows
         is_both   = row_idx in both_rows
-        warn_cols = yellow_cells.get(row_idx, set())
+        row_issues = issue_cells.get(row_idx, {})
 
         for ci, cn in enumerate(columns_order):
             val = row[cn]
@@ -1699,7 +1719,6 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list, peri
                     except Exception:
                         ws.write(er, ci, str(val), use_f)
                 elif cn == "توقيت الاختبار" and val != "":
-                    # دائماً كنص H:MM مثل 1:45 / 8:30
                     use_f = time_f if time_f else f
                     ws.write_string(er, ci, str(val), use_f)
                 elif cn in {"الرقم", "المواليد"} and val != "":
@@ -1721,40 +1740,30 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list, peri
                     return arial_fmt
                 return normal_fmt
 
+            def write_issue_or_normal(prefer_shurty_status=False, prefer_note_name=False):
+                if prefer_shurty_status and cn == "الحالة":
+                    write_cell(yellow_cell)
+                    return
+                if prefer_note_name and cn == "الاسم":
+                    write_cell(note_name_fmt)
+                    return
+                if cn in row_issues:
+                    itype = row_issues[cn]
+                    pair = issue_fmts[itype]
+                    write_cell(pair["cell"], time_f=pair["time"])
+                    return
+                write_cell(normal_f(), phone_f=phone_fmt, time_f=time_fmt)
+
             if is_camera:
-                # صف كامل أحمر
                 write_cell(cam_fmt, phone_f=cam_phone, time_f=cam_time)
-
             elif is_both:
-                # شرطي + جوهرية: خلية الحالة أصفر + خلية الاسم أحمر + باقي عادي
-                # مع الإبقاء على تلوين نواقص البيانات في خلاياها
-                if cn == "الحالة" or cn in warn_cols:
-                    write_cell(yellow_cell, time_f=yellow_time)
-                elif cn == "الاسم":
-                    write_cell(red_cell)
-                else:
-                    write_cell(normal_f(), phone_f=phone_fmt, time_f=time_fmt)
-
+                write_issue_or_normal(prefer_shurty_status=True, prefer_note_name=True)
             elif is_shurty:
-                if cn == "الحالة" or cn in warn_cols:
-                    write_cell(yellow_cell, time_f=yellow_time)
-                else:
-                    write_cell(normal_f())
-
+                write_issue_or_normal(prefer_shurty_status=True)
             elif is_note:
-                if cn in warn_cols:
-                    write_cell(yellow_cell, time_f=yellow_time)
-                elif cn == "الاسم":
-                    write_cell(red_cell)
-                else:
-                    write_cell(normal_f())
-
-            elif cn in warn_cols:
-                # نقص/خطأ بيانات أو عدم تطابق فترة — الخلية المعنية فقط
-                write_cell(yellow_cell, time_f=yellow_time)
-
+                write_issue_or_normal(prefer_note_name=True)
             else:
-                write_cell(normal_f())
+                write_issue_or_normal()
 
     # ── القوائم المنسدلة ─────────────────────────────────────────────────────
     last_dv_row = len(df_out) + 50
@@ -1778,7 +1787,7 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list, peri
     workbook.close()
     output.seek(0)
     n_colored = len(camera_rows) + len(shurty_rows) + len(note_rows) + len(both_rows)
-    n_issues  = len(yellow_cells)
+    n_issues  = len(issue_cells)
     return (output.read(), n_colored, 0,
             n_issues, day_report,
             time_format_errors, period_mismatch_rows, teacher_col_val)
@@ -1818,12 +1827,15 @@ if uploaded_stage2:
     st.markdown(
         """
         <div style="background:white;border-radius:10px;padding:0.8rem 1.2rem;
-        margin-bottom:1rem;border:1px solid #e0d0f8;font-size:0.88rem;direction:rtl;">
-            <b>دليل الألوان:</b> &nbsp;
-            <span style="background:#FF9999;padding:2px 10px;border-radius:4px;">🔴 كاميرا — صف كامل</span> &nbsp;
-            <span style="background:#FF9999;padding:2px 10px;border-radius:4px;">🔴 ملاحظة جوهرية — خلية الاسم</span> &nbsp;
+        margin-bottom:1rem;border:1px solid #e0d0f8;font-size:0.82rem;direction:rtl;line-height:2;">
+            <b>دليل الألوان:</b><br>
             <span style="background:#FFFF99;padding:2px 10px;border-radius:4px;">🟡 شرطي — خلية الحالة</span> &nbsp;
-            <span style="background:#FFFF99;padding:2px 10px;border-radius:4px;">🟡 نقص/عدم تطابق — الخلية فقط</span>
+            <span style="background:#FF9999;padding:2px 10px;border-radius:4px;">🔴 كاميرا — صف كامل</span> &nbsp;
+            <span style="background:#FFB347;padding:2px 10px;border-radius:4px;">🟠 ملاحظة جوهرية — خلية الاسم</span><br>
+            <span style="background:#D7BDE2;padding:2px 10px;border-radius:4px;">🟣 حالة فارغة</span> &nbsp;
+            <span style="background:#AED6F1;padding:2px 10px;border-radius:4px;">🔵 نقص يوم/فترة</span> &nbsp;
+            <span style="background:#76D7C4;padding:2px 10px;border-radius:4px;">🟢 عدم تطابق الفترة مع الوقت</span> &nbsp;
+            <span style="background:#F5B7B1;padding:2px 10px;border-radius:4px;">🩷 حقول اختبار غير مطلوبة</span>
         </div>
         """,
         unsafe_allow_html=True,
