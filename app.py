@@ -1677,72 +1677,115 @@ def resolve_period_for_time(fixed_time, period_schedule, hinted_period=None):
     return chosen, (chosen == hinted_period) if hinted_period else True
 
 
-def analyze_day_distribution(students_df, days_list, day_col, status_col):
-    """
-    يحلل توزيع الطالبات على الأيام ويُنتج تقريراً يوضح:
-    - عدد الطالبات الكلي اللواتي أنهين المقرر
-    - الحصة المثالية لكل يوم
-    - الأيام التي فيها ضغط (أكثر من الحصة) أو فراغ (أقل من الحصة)
-    - الطالبات غير الموزعات (بدون يوم)
-    يُعيد: dict يحتوي على ملخص التقرير
-    """
-    finished_mask = students_df[status_col].astype(str).str.strip() == "أنهت المقرر"
-    finished_df   = students_df[finished_mask]
-    total         = len(finished_df)
-
-    if total == 0 or not days_list:
-        return {"total": 0, "days": {}, "unassigned": 0, "has_issue": False, "ideal": 0}
-
-    d           = len(days_list)
-    base, extra = divmod(total, d)
-
-    # الحصة المثالية لكل يوم
-    ideal = {}
-    for i, day in enumerate(days_list):
-        ideal[day] = base + (1 if i < extra else 0)
-
-    # العدد الفعلي لكل يوم
-    actual = {day: 0 for day in days_list}
-    unassigned = 0
-    for _, row in finished_df.iterrows():
-        day_val = str(row[day_col]).strip()
-        if day_val in ("", "nan"):
-            unassigned += 1
-        else:
-            matched = False
-            for day in days_list:
-                if day_val in day or day in day_val:
-                    actual[day] = actual.get(day, 0) + 1
-                    matched = True
-                    break
-            if not matched:
-                unassigned += 1
-
-    # بناء تقرير لكل يوم
-    # مناسب فقط عند التطابق التام؛ الضغط والنقص كلاهما يحتاج تدخل
-    days_report = {}
-    has_issue   = False
+def _match_day_name(day_val, days_list):
+    """يرجع اسم اليوم المطابق من القائمة، أو None."""
+    s = str(day_val).strip() if day_val is not None else ""
+    if not s or s.lower() == "nan":
+        return None
     for day in days_list:
-        a = actual.get(day, 0)
-        i = ideal.get(day, 0)
-        if a > i:
-            status = "🔴 ضغط — يجب تحويل " + str(a - i) + " طالبة"
+        if s == day or s in day or day in s:
+            return day
+    return None
+
+
+def analyze_day_distribution(students_df, days_list, day_col, status_col, notes_col=None):
+    """
+    يحلل توزيع الأيام:
+    - المثالي والحالة مبنيان على اللواتي «أنهت المقرر»
+    - عمود شرطي: طالبات لسن «أنهت المقرر» ولهن يوم اختبار (مثل لم تنه المقرر + موعد)
+    """
+    if not days_list:
+        return {
+            "total": 0, "total_shurty": 0, "days": {},
+            "unassigned": 0, "has_issue": False, "ideal_base": 0, "ideal_extra": 0,
+        }
+
+    status_s = students_df[status_col].astype(str).str.strip()
+    finished_mask = status_s == "أنهت المقرر"
+    finished_df = students_df[finished_mask]
+    total = len(finished_df)
+
+    d = len(days_list)
+    base, extra = (0, 0) if total == 0 else divmod(total, d)
+    ideal = {
+        day: (base + (1 if i < extra else 0)) if total else 0
+        for i, day in enumerate(days_list)
+    }
+
+    finished_actual = {day: 0 for day in days_list}
+    shurty_actual = {day: 0 for day in days_list}
+    unassigned = 0
+    total_shurty = 0
+
+    for _, row in students_df.iterrows():
+        name_val = str(row.get("الاسم", "")).strip()
+        if not name_val or name_val.lower() == "nan":
+            continue
+
+        st_val = str(row.get(status_col, "")).strip()
+        note_val = ""
+        if notes_col and notes_col in students_df.columns:
+            note_val = str(row.get(notes_col, "")).strip()
+            if note_val.lower() == "nan":
+                note_val = ""
+
+        matched = _match_day_name(row.get(day_col, ""), days_list)
+
+        if st_val == "أنهت المقرر":
+            if matched is None:
+                unassigned += 1
+            else:
+                finished_actual[matched] += 1
+            continue
+
+        # شرطي على جدول الأيام: لها يوم وليست «أنهت المقرر»
+        # (يشمل لم تنه المقرر + موعد، أو ملاحظة شرطي مع يوم)
+        is_shurty_case = (
+            matched is not None
+            and (
+                KEYWORD_RED in note_val
+                or st_val == "لم تنه المقرر"
+            )
+        )
+        if is_shurty_case:
+            shurty_actual[matched] += 1
+            total_shurty += 1
+
+    days_report = {}
+    has_issue = False
+    for day in days_list:
+        fin = finished_actual.get(day, 0)
+        shu = shurty_actual.get(day, 0)
+        ide = ideal.get(day, 0)
+        if total == 0 and total_shurty == 0:
+            status = "✅ لا يوجد توزيع"
+        elif fin > ide:
+            status = "🔴 ضغط — يجب تحويل " + str(fin - ide) + " طالبة"
             has_issue = True
-        elif a < i:
-            status = "🟡 نقص — يحتاج " + str(i - a) + " طالبة"
+        elif fin < ide:
+            status = "🟡 نقص — يحتاج " + str(ide - fin) + " طالبة"
             has_issue = True
         else:
             status = "✅ مناسب"
-        days_report[day] = {"actual": a, "ideal": i, "status": status}
+        if shu > 0:
+            status = status + " — مع " + str(shu) + " شرطي"
+        days_report[day] = {
+            "actual": fin,
+            "shurty": shu,
+            "total": fin + shu,
+            "ideal": ide,
+            "status": status,
+        }
 
     if unassigned > 0:
         has_issue = True
 
     return {
-        "total":      total,
-        "days":       days_report,
+        "total": total,
+        "total_shurty": total_shurty,
+        "days": days_report,
         "unassigned": unassigned,
-        "has_issue":  has_issue,
+        "has_issue": has_issue,
         "ideal_base": base,
         "ideal_extra": extra,
     }
@@ -1793,12 +1836,11 @@ def build_distribution_report(day_reports):
     """
     يبني ملف Excel واحد يحتوي:
     - ورقة "ملخص" تجمع كل المعلمات في جدول واحد
-    - ورقة منفصلة لكل معلمة تفصيلية
+    - ورقة منفصلة لكل معلمة تفصيلية (أنهين + شرطي)
     """
     output   = io.BytesIO()
     workbook = xlsxwriter.Workbook(output, {"in_memory": True})
 
-    # ── صيغ مشتركة ───────────────────────────────────────────────────────────
     def fmt(bold=False, bg=None, align="center"):
         d = {"font_name": "Calibri", "font_size": 11,
              "align": align, "valign": "vcenter", "border": 1}
@@ -1811,29 +1853,36 @@ def build_distribution_report(day_reports):
     ok_fmt   = fmt()
     red_fmt  = fmt(bg="#FF9999")
     yel_fmt  = fmt(bg="#FFE699")
+    soft_yel = fmt(bg="#FFFF99")
     bold_fmt = fmt(bold=True, align="right")
     title_fmt = workbook.add_format({"bold": True, "font_name": "Calibri",
                                      "font_size": 13, "align": "center",
                                      "valign": "vcenter", "bg_color": "#EDE8F5"})
+    note_fmt = workbook.add_format({
+        "font_name": "Calibri", "font_size": 10, "align": "right",
+        "valign": "vcenter", "font_color": "#555555",
+    })
 
     # ── ورقة الملخص ──────────────────────────────────────────────────────────
     ws_sum = workbook.add_worksheet("ملخص")
     ws_sum.right_to_left()
-    ws_sum.set_column(0, 0, 25)   # المعلمة
-    ws_sum.set_column(1, 1, 10)   # إجمالي
-    ws_sum.set_column(2, 2, 12)   # أيام مكتظة
-    ws_sum.set_column(3, 3, 12)   # أيام ناقصة
-    ws_sum.set_column(4, 4, 15)   # الحالة العامة
+    ws_sum.set_column(0, 0, 25)
+    ws_sum.set_column(1, 1, 12)
+    ws_sum.set_column(2, 2, 10)
+    ws_sum.set_column(3, 3, 12)
+    ws_sum.set_column(4, 4, 12)
+    ws_sum.set_column(5, 5, 16)
 
-    ws_sum.merge_range(0, 0, 0, 4, "ملخص توزيع الأيام — جميع المعلمات", title_fmt)
+    ws_sum.merge_range(0, 0, 0, 5, "ملخص توزيع الأيام — جميع المعلمات", title_fmt)
     ws_sum.set_row(0, 25)
 
-    for ci, h in enumerate(["المعلمة", "أنهين المقرر", "أيام مكتظة", "أيام ناقصة", "الحالة"]):
+    for ci, h in enumerate(["المعلمة", "أنهين المقرر", "شرطي", "أيام مكتظة", "أيام ناقصة", "الحالة"]):
         ws_sum.write(1, ci, h, hdr_fmt)
 
     for ri, (teacher, report) in enumerate(day_reports.items()):
         r          = ri + 2
         total      = report.get("total", 0)
+        shurty_n   = report.get("total_shurty", 0)
         unassigned = report.get("unassigned", 0)
         over_days  = sum(1 for d in report.get("days", {}).values() if "🔴" in d["status"])
         under_days = sum(1 for d in report.get("days", {}).values() if "🟡" in d["status"])
@@ -1843,9 +1892,10 @@ def build_distribution_report(day_reports):
         status_txt = "⚠️ يحتاج تدخل" if has_issue else "✅ موزّع بشكل جيد"
         ws_sum.write(r, 0, teacher,    row_fmt)
         ws_sum.write(r, 1, total,      row_fmt)
-        ws_sum.write(r, 2, over_days,  red_fmt if over_days  else ok_fmt)
-        ws_sum.write(r, 3, under_days, yel_fmt if under_days else ok_fmt)
-        ws_sum.write(r, 4, status_txt, row_fmt)
+        ws_sum.write(r, 2, shurty_n,   soft_yel if shurty_n else ok_fmt)
+        ws_sum.write(r, 3, over_days,  red_fmt if over_days  else ok_fmt)
+        ws_sum.write(r, 4, under_days, yel_fmt if under_days else ok_fmt)
+        ws_sum.write(r, 5, status_txt, row_fmt)
 
     # ── ورقة لكل معلمة ───────────────────────────────────────────────────────
     used_sheet_names = {"ملخص"}
@@ -1853,17 +1903,14 @@ def build_distribution_report(day_reports):
         sh_name  = _safe_sheet_name(teacher, used_sheet_names)
         ws       = workbook.add_worksheet(sh_name)
         ws.right_to_left()
-        ws.set_column(0, 0, 22)
-        ws.set_column(1, 1, 10)
-        ws.set_column(2, 2, 10)
-        ws.set_column(3, 3, 35)
+        for c, w in enumerate([18, 10, 10, 10, 10, 38]):
+            ws.set_column(c, c, w)
 
-        # عنوان
-        ws.merge_range(0, 0, 0, 3, "تقرير توزيع الأيام — " + teacher, title_fmt)
+        ws.merge_range(0, 0, 0, 5, "تقرير توزيع الأيام — " + teacher, title_fmt)
         ws.set_row(0, 25)
 
-        # معلومات عامة
         total      = report.get("total", 0)
+        shurty_n   = report.get("total_shurty", 0)
         unassigned = report.get("unassigned", 0)
         base       = report.get("ideal_base", 0)
         xtra       = report.get("ideal_extra", 0)
@@ -1871,25 +1918,37 @@ def build_distribution_report(day_reports):
 
         ws.write(1, 0, "إجمالي اللواتي أنهين المقرر:", bold_fmt)
         ws.write(1, 1, total, ok_fmt)
-        ws.write(2, 0, "التوزيع المثالي:", bold_fmt)
-        ws.write(2, 1, ideal_txt, ok_fmt)
+        ws.write(2, 0, "عدد الشرطي (بمواعيد):", bold_fmt)
+        ws.write(2, 1, shurty_n, soft_yel if shurty_n else ok_fmt)
+        ws.write(3, 0, "التوزيع المثالي (حسب من أنهين):", bold_fmt)
+        ws.write(3, 1, ideal_txt, ok_fmt)
+        row_cursor = 4
         if unassigned:
-            ws.write(3, 0, "⚠️ بدون يوم محدد:", bold_fmt)
-            ws.write(3, 1, unassigned, red_fmt)
+            ws.write(row_cursor, 0, "⚠️ أنهين المقرر بدون يوم:", bold_fmt)
+            ws.write(row_cursor, 1, unassigned, red_fmt)
+            row_cursor += 1
+        ws.merge_range(
+            row_cursor, 0, row_cursor, 5,
+            "المثالي والحالة لـ«أنهين المقرر» فقط — عمود شرطي إضافي للمواعيد المحجوزة",
+            note_fmt,
+        )
+        header_row = row_cursor + 2
 
-        # هيدر جدول الأيام
-        for ci, h in enumerate(["اليوم", "الفعلي", "المثالي", "الحالة"]):
-            ws.write(5, ci, h, hdr_fmt)
+        for ci, h in enumerate(["اليوم", "أنهين", "شرطي", "الإجمالي", "المثالي", "الحالة"]):
+            ws.write(header_row, ci, h, hdr_fmt)
 
         for ri, (day, info) in enumerate(report.get("days", {}).items()):
-            r       = ri + 6
+            r       = header_row + 1 + ri
             is_over = "🔴" in info["status"]
             is_under= "🟡" in info["status"]
-            df      = red_fmt if is_over else (yel_fmt if is_under else ok_fmt)
-            ws.write(r, 0, day,            df)
-            ws.write(r, 1, info["actual"], df)
-            ws.write(r, 2, info["ideal"],  df)
-            ws.write(r, 3, info["status"], df)
+            row_f   = red_fmt if is_over else (yel_fmt if is_under else ok_fmt)
+            shu     = info.get("shurty", 0)
+            ws.write(r, 0, day,                     row_f)
+            ws.write(r, 1, info.get("actual", 0),   row_f)
+            ws.write(r, 2, shu, soft_yel if shu else row_f)
+            ws.write(r, 3, info.get("total", info.get("actual", 0)), row_f)
+            ws.write(r, 4, info.get("ideal", 0),    row_f)
+            ws.write(r, 5, info.get("status", ""),  row_f)
 
     workbook.close()
     output.seek(0)
@@ -1967,13 +2026,6 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list, peri
     for col in columns_order:
         if col not in df.columns:
             df[col] = ""
-
-    # ── تحليل توزيع الأيام ───────────────────────────────────────────────────
-    day_report = {}
-    if col_map["status"] and col_map["day"] and days_list:
-        day_report = analyze_day_distribution(
-            df, days_list, col_map["day"], col_map["status"]
-        )
 
     # ── فحص كل صف ────────────────────────────────────────────────────────────
     camera_rows         = []   # كاميرا  → صف كامل أحمر
@@ -2085,6 +2137,14 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list, peri
             shurty_rows.append(idx)
         elif has_note:
             note_rows.append(idx)
+
+    # ── تحليل توزيع الأيام بعد إضافة شرطي التلقائي ────────────────────────────
+    day_report = {}
+    if col_map["status"] and col_map["day"] and days_list:
+        day_report = analyze_day_distribution(
+            df, days_list, col_map["day"], col_map["status"],
+            notes_col=col_map["notes"] or "الملاحظات",
+        )
 
     # ── بناء Excel ───────────────────────────────────────────────────────────
     output   = io.BytesIO()
