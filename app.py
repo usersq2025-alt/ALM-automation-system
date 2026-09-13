@@ -2053,13 +2053,24 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list, peri
                         (idx, period, correct_period or "—")
                     )
         else:
-            # ليست «أنهت المقرر»: لا داعي ليوم/وقت/فترة
-            if not is_blank(day):
-                mark_issue(idx, "يوم الاختبار", ISSUE_UNEXPECTED)
-            if has_time:
-                mark_issue(idx, "توقيت الاختبار", ISSUE_UNEXPECTED)
-            if not is_blank(period):
-                mark_issue(idx, "الفترة", ISSUE_UNEXPECTED)
+            # ليست «أنهت المقرر»
+            has_exam_fields = (
+                not is_blank(day) or has_time or not is_blank(period)
+            )
+            if status == "لم تنه المقرر" and has_exam_fields:
+                # نمط شائع: لم تنه المقرر + موعد اختبار → شرطي تلقائياً + تمييز أصفر
+                if KEYWORD_RED not in note:
+                    note = f"{note} {KEYWORD_RED}".strip() if note else KEYWORD_RED
+                    notes_col = col_map["notes"] or "الملاحظات"
+                    df.at[idx, notes_col] = note
+            elif has_exam_fields:
+                # حالات أخرى مع حقول اختبار غير متوقعة → تلوين وردي
+                if not is_blank(day):
+                    mark_issue(idx, "يوم الاختبار", ISSUE_UNEXPECTED)
+                if has_time:
+                    mark_issue(idx, "توقيت الاختبار", ISSUE_UNEXPECTED)
+                if not is_blank(period):
+                    mark_issue(idx, "الفترة", ISSUE_UNEXPECTED)
 
         # منطق ألوان الملاحظات — كاميرا لها أولوية قصوى
         has_camera = KEYWORD_CAMERA in note
