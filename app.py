@@ -1070,7 +1070,7 @@ def render_batch_separate_download(files_dict, widget_key="batch_sep"):
         else msg.textContent = 'تعذّر الحفظ. تأكدي من منح صلاحية الكتابة للمجلد.';
       }}
     }});
-  <\/script>
+  <\\/script>
 </body>
 </html>`;
             const blob = new Blob([html], {{ type: 'text/html;charset=utf-8' }});
