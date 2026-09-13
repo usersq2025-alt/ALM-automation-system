@@ -974,6 +974,168 @@ def persist_settings_to_browser(cookie_manager):
         pass
 
 
+def render_batch_separate_download(files_dict, widget_key="batch_sep"):
+    """زر واحد لتنزيل كل الملفات كملفات مستقلة (بدون ZIP)."""
+    if not files_dict:
+        return
+    items = []
+    total_b64 = 0
+    for name, data in files_dict.items():
+        b64 = base64.b64encode(data).decode("ascii")
+        total_b64 += len(b64)
+        items.append({"name": name, "b64": b64})
+    if total_b64 >= 12_000_000:
+        st.caption("الملفات كبيرة للتنزيل الجماعي المنفصل — استخدمي ZIP أو التنزيل الفردي.")
+        return
+    files_json = json.dumps(items, ensure_ascii=False)
+    components.html(
+        f"""
+        <div style="font-family:Tajawal,sans-serif;direction:rtl;">
+          <button id="dl_all_{widget_key}" style="width:100%;padding:12px 14px;border:none;border-radius:12px;
+            background:linear-gradient(135deg,#0f766e,#0d9488);color:#fff;font-weight:800;
+            cursor:pointer;font-size:0.95rem;box-shadow:0 4px 14px rgba(13,148,136,0.3);">
+            ⬇️ تنزيل الجميع منفصلاً ({len(items)})
+          </button>
+        </div>
+        <script>
+          const files_{widget_key} = {files_json};
+          const btn_{widget_key} = document.getElementById('dl_all_{widget_key}');
+          btn_{widget_key}.addEventListener('click', async () => {{
+            btn_{widget_key}.disabled = true;
+            btn_{widget_key}.textContent = 'جارٍ التنزيل...';
+            for (const f of files_{widget_key}) {{
+              const a = document.createElement('a');
+              a.href = 'data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,' + f.b64;
+              a.download = f.name;
+              document.body.appendChild(a);
+              a.click();
+              a.remove();
+              await new Promise(r => setTimeout(r, 450));
+            }}
+            btn_{widget_key}.disabled = false;
+            btn_{widget_key}.textContent = '⬇️ تنزيل الجميع منفصلاً (' + files_{widget_key}.length + ')';
+          }});
+        </script>
+        """,
+        height=56,
+    )
+
+
+def render_stage2_results_ui(stage2_results, day_reports, stage2_errors,
+                             time_fmt_warnings, period_warnings,
+                             total_red, total_issues):
+    """واجهة نتائج المرحلة 2 — مختصرة ومركّزة على التحميل."""
+    for e in stage2_errors:
+        st.error(e)
+
+    if not stage2_results:
+        return
+
+    n_files = len(stage2_results)
+    has_balance_issue = any(
+        r.get("has_issue") or r.get("unassigned", 0) > 0
+        for r in (day_reports or {}).values()
+    )
+    n_alerts = len(time_fmt_warnings or {}) + len(period_warnings or {})
+
+    # بطاقة الملخص + أسماء المعلمات (كل اسم = تنزيل)
+    st.markdown(
+        f"""
+        <div style="background:white;border:1px solid #e0d0f8;border-radius:16px;
+        padding:1.1rem 1.3rem;margin:0.6rem 0 1rem;box-shadow:0 2px 12px rgba(59,15,114,0.06);">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+                <div style="font-size:1.05rem;font-weight:900;color:#3b0f72;">
+                    ✅ تمت معالجة {n_files} ملف
+                </div>
+                <div style="font-size:0.82rem;color:#6b7280;">
+                    اضغطي اسم المعلمة لتنزيل ملفها
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    names = list(stage2_results.keys())
+    # صفوف أزرار بأسماء المعلمات
+    per_row = 3 if n_files > 3 else max(n_files, 1)
+    for start in range(0, n_files, per_row):
+        chunk = names[start:start + per_row]
+        cols = st.columns(len(chunk))
+        for i, fname in enumerate(chunk):
+            teacher_label = fname[:-5] if fname.lower().endswith(".xlsx") else fname
+            with cols[i]:
+                st.download_button(
+                    label="📄 " + teacher_label,
+                    data=stage2_results[fname],
+                    file_name=fname,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                    key=f"s2_teacher_{start + i}",
+                )
+
+    st.markdown("<div style='height:0.4rem'></div>", unsafe_allow_html=True)
+
+    # تنزيل الجميع
+    c_all1, c_all2 = st.columns(2)
+    with c_all1:
+        render_batch_separate_download(stage2_results, widget_key="stage2_batch")
+    with c_all2:
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            for fname, fbytes in stage2_results.items():
+                zf.writestr(fname, fbytes)
+        zip_buffer.seek(0)
+        st.download_button(
+            label=f"📦 تنزيل الجميع — ZIP ({n_files})",
+            data=zip_buffer,
+            file_name="مراجعة_المعلمات.zip",
+            mime="application/zip",
+            use_container_width=True,
+            key="stage2_all_zip",
+        )
+
+    # تقرير التوزيع
+    if day_reports:
+        report_bytes = build_distribution_report(day_reports)
+        st.download_button(
+            label="📊 تنزيل تقرير توزيع الأيام",
+            data=report_bytes,
+            file_name="تقرير_توزيع_الأيام.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            key="report_download",
+        )
+        if has_balance_issue:
+            st.caption("⚠️ التقرير يشير إلى أيام مكتظة أو ناقصة — راجعيه بعد التنزيل.")
+        else:
+            st.caption("✅ التوزيع متوازن حسب التقرير.")
+
+    # تنبيهات مطوية — لا تزاحم أزرار التحميل
+    if n_alerts or total_issues or total_red:
+        with st.expander("🔎 تفاصيل التدقيق والتنبيهات", expanded=False):
+            m1, m2 = st.columns(2)
+            with m1:
+                st.metric("صفوف ملوّنة بملاحظات", total_red)
+            with m2:
+                st.metric("صفوف تحتاج مراجعة بيانات", total_issues)
+
+            if time_fmt_warnings:
+                st.markdown("**تنسيق التوقيت**")
+                for fname, errors in time_fmt_warnings.items():
+                    rows_str = "، ".join(f"صف {idx+2}" for idx, raw in errors)
+                    st.warning(f"{fname}: {rows_str}")
+
+            if period_warnings:
+                st.markdown("**تعارض الفترة مع الوقت**")
+                for fname, mismatches in period_warnings.items():
+                    lines = [
+                        f"صف {idx+2}: {actual} ← {correct}"
+                        for idx, actual, correct in mismatches
+                    ]
+                    st.info(f"**{fname}** — " + " | ".join(lines))
+
+
 def render_separate_downloads(files_dict, key_prefix, zip_name=None):
     """تنزيل ZIP + تنزيل منفصل لكل ملف + زر لتنزيل الكل كملفات منفصلة."""
     if not files_dict:
@@ -995,52 +1157,7 @@ def render_separate_downloads(files_dict, key_prefix, zip_name=None):
     )
 
     st.markdown("##### 📂 تنزيل منفصل")
-    # زر واحد يُنزّل كل الملفات كملفات مستقلة (بدون ZIP)
-    items = []
-    total_b64 = 0
-    for name, data in files_dict.items():
-        b64 = base64.b64encode(data).decode("ascii")
-        total_b64 += len(b64)
-        items.append({"name": name, "b64": b64})
-
-    if total_b64 < 12_000_000:
-        files_json = json.dumps(items, ensure_ascii=False)
-        components.html(
-            f"""
-            <div style="font-family:Tajawal,sans-serif;direction:rtl;">
-              <button id="dl_all" style="width:100%;padding:11px 14px;border:none;border-radius:11px;
-                background:linear-gradient(135deg,#0f766e,#0d9488);color:#fff;font-weight:800;
-                cursor:pointer;font-size:0.95rem;box-shadow:0 4px 14px rgba(13,148,136,0.35);">
-                ⬇️ تنزيل الكل منفصلاً ({len(items)} ملف)
-              </button>
-              <div id="hint" style="margin-top:6px;font-size:0.75rem;color:#64748b;text-align:center;">
-                قد يطلب المتصفح السماح بتنزيلات متعددة
-              </div>
-            </div>
-            <script>
-              const files = {files_json};
-              const btn = document.getElementById('dl_all');
-              btn.addEventListener('click', async () => {{
-                btn.disabled = true;
-                btn.textContent = 'جارٍ التنزيل...';
-                for (const f of files) {{
-                  const a = document.createElement('a');
-                  a.href = 'data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,' + f.b64;
-                  a.download = f.name;
-                  document.body.appendChild(a);
-                  a.click();
-                  a.remove();
-                  await new Promise(r => setTimeout(r, 450));
-                }}
-                btn.disabled = false;
-                btn.textContent = '⬇️ تنزيل الكل منفصلاً (' + files.length + ' ملف)';
-              }});
-            </script>
-            """,
-            height=78,
-        )
-    else:
-        st.caption("الملفات كبيرة — استخدمي الأزرار الفردية أو ZIP.")
+    render_batch_separate_download(files_dict, widget_key=key_prefix + "_batch")
 
     cols = st.columns(2)
     for i, (fname, fbytes) in enumerate(files_dict.items()):
@@ -2136,74 +2253,15 @@ if uploaded_stage2:
             st.session_state["stage2_total_issues"] = total_issues
 
     if st.session_state.get("stage2_results") is not None:
-        stage2_results = st.session_state["stage2_results"]
-        stage2_errors = st.session_state.get("stage2_errors", [])
-        day_reports = st.session_state.get("stage2_day_reports", {})
-        time_fmt_warnings = st.session_state.get("stage2_time_fmt_warnings", {})
-        period_warnings = st.session_state.get("stage2_period_warnings", {})
-        total_red = st.session_state.get("stage2_total_red", 0)
-        total_issues = st.session_state.get("stage2_total_issues", 0)
-
-        for e in stage2_errors:
-            st.error(e)
-
-        if time_fmt_warnings:
-            st.markdown('<div class="section-title">⚠️ تنبيهات تنسيق التوقيت</div>', unsafe_allow_html=True)
-            for fname, errors in time_fmt_warnings.items():
-                rows_str = "، ".join(f"صف {idx+2} (قيمة: {raw})" for idx, raw in errors)
-                st.warning(f"📄 **{fname}** — خلايا التوقيت مُنسَّقة كتاريخ وليس ساعة: {rows_str}")
-            st.info("💡 الحل: افتحي الملف الأصلي، حددي عمود التوقيت، وغيّري تنسيق الخلايا إلى 'وقت' (hh:mm)")
-
-        if period_warnings:
-            st.markdown('<div class="section-title">🕐 تعارض الفترة مع الوقت</div>', unsafe_allow_html=True)
-            for fname, mismatches in period_warnings.items():
-                with st.expander(f"📄 {fname} — {len(mismatches)} تعارض"):
-                    for idx, actual, correct in mismatches:
-                        st.markdown(
-                            f"&nbsp; صف **{idx+2}**: الفترة المكتوبة **{actual}** "
-                            f"← الصحيحة للوقت هي **{correct}**",
-                            unsafe_allow_html=True,
-                        )
-
-        if stage2_results:
-            cols2 = st.columns(4)
-            with cols2[0]:
-                st.markdown('<div class="stat-card"><div class="number">' + str(len(stage2_results)) + '</div><div class="label">ملف معالج</div></div>', unsafe_allow_html=True)
-            with cols2[1]:
-                st.markdown('<div class="stat-card"><div class="number" style="color:#c0392b">' + str(total_red) + '</div><div class="label">صفوف مُلوَّنة 🎨</div></div>', unsafe_allow_html=True)
-            with cols2[2]:
-                st.markdown('<div class="stat-card"><div class="number" style="color:#b7950b">' + str(total_issues) + '</div><div class="label">يحتاج مراجعة 🟡</div></div>', unsafe_allow_html=True)
-            with cols2[3]:
-                under_or_over = sum(
-                    1 for r in day_reports.values()
-                    for d in r.get("days", {}).values()
-                    if "🔴" in d["status"] or "🟡" in d["status"]
-                )
-                st.markdown('<div class="stat-card"><div class="number" style="color:#555">' + str(under_or_over) + '</div><div class="label">أيام غير متوازنة 📊</div></div>', unsafe_allow_html=True)
-
-            if day_reports:
-                report_bytes = build_distribution_report(day_reports)
-                has_any_issue = any(
-                    r.get("has_issue") or r.get("unassigned", 0) > 0
-                    for r in day_reports.values()
-                )
-                st.markdown('<div class="section-title">📊 تقرير توزيع الأيام</div>', unsafe_allow_html=True)
-                st.caption(f"يشمل التقرير {len(day_reports)} معلمة من أصل {len(stage2_results)} ملف مرفوع")
-                if has_any_issue:
-                    st.warning("⚠️ يوجد أيام مكتظة أو ناقصة أو طالبات بدون يوم — راجعي التقرير")
-                else:
-                    st.success("✅ التوزيع متوازن لدى جميع المعلمات")
-                st.download_button(
-                    label="⬇️ تحميل تقرير التوزيع — Excel",
-                    data=report_bytes,
-                    file_name="تقرير_توزيع_الأيام.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True,
-                    key="report_download",
-                )
-
-            st.markdown('<div class="section-title">📦 تحميل الملفات المُدققة</div>', unsafe_allow_html=True)
-            render_separate_downloads(stage2_results, key_prefix="stage2_dl", zip_name="مراجعة_المعلمات.zip")
+        render_stage2_results_ui(
+            stage2_results=st.session_state["stage2_results"],
+            day_reports=st.session_state.get("stage2_day_reports", {}),
+            stage2_errors=st.session_state.get("stage2_errors", []),
+            time_fmt_warnings=st.session_state.get("stage2_time_fmt_warnings", {}),
+            period_warnings=st.session_state.get("stage2_period_warnings", {}),
+            total_red=st.session_state.get("stage2_total_red", 0),
+            total_issues=st.session_state.get("stage2_total_issues", 0),
+        )
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # المرحلة الثالثة — تجميع ملفات المعلمات في ملف لجان واحد
