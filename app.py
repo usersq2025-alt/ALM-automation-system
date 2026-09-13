@@ -4,6 +4,17 @@ import io
 import zipfile
 import xlsxwriter
 import xml.etree.ElementTree as ET
+import json
+import base64
+import datetime
+import streamlit.components.v1 as components
+
+try:
+    import extra_streamlit_components as stx
+    HAS_COOKIE_MGR = True
+except ImportError:
+    stx = None
+    HAS_COOKIE_MGR = False
 
 # ── اللوغو — ضعي ملف logo.png في نفس مجلد app.py ─────────────────────────
 import os, base64
@@ -232,7 +243,7 @@ st.markdown(
 
     /* ── Sidebar background ── */
     [data-testid="stSidebar"] > div:first-child {
-        background: linear-gradient(180deg, #2d1b4e 0%, #3d2060 100%) !important;
+        background: linear-gradient(180deg, #16082b 0%, #2a1248 45%, #3b1a66 100%) !important;
     }
 
     /* ── Sidebar — force ALL text to light purple ── */
@@ -246,18 +257,49 @@ st.markdown(
     }
     [data-testid="stSidebar"] label {
         font-weight: 700 !important;
-        font-size: 0.95rem !important;
+        font-size: 0.9rem !important;
+    }
+
+    /* بطاقات الإعدادات داخل الشريط الجانبي */
+    [data-testid="stSidebar"] [data-testid="stTextArea"] {
+        background: rgba(255,255,255,0.07) !important;
+        border: 1px solid rgba(167,139,250,0.4) !important;
+        border-radius: 14px !important;
+        padding: 10px 12px 6px !important;
+        margin-bottom: 0.75rem !important;
+        box-shadow: 0 6px 18px rgba(0,0,0,0.18) !important;
+    }
+    [data-testid="stSidebar"] .sidebar-card-title {
+        display: block;
+        font-size: 0.78rem;
+        font-weight: 800;
+        color: #c4b5fd !important;
+        margin: 0.15rem 0 0.35rem;
+        letter-spacing: 0.2px;
+    }
+    [data-testid="stSidebar"] .sidebar-summary {
+        background: rgba(124,58,237,0.22);
+        border: 1px solid rgba(167,139,250,0.45);
+        border-radius: 12px;
+        padding: 0.75rem 0.9rem;
+        margin-top: 0.4rem;
+        font-size: 0.8rem;
+        color: #ddd6fe !important;
+        line-height: 1.7;
+    }
+    [data-testid="stSidebar"] .sidebar-summary b {
+        color: #f5f3ff !important;
     }
 
     /* ── Sidebar textarea — dark bg + white text ── */
     [data-testid="stSidebar"] textarea,
     [data-testid="stSidebar"] .stTextArea textarea {
-        background-color: #1e1035 !important;
-        border: 2px solid #9b6fd4 !important;
-        border-radius: 8px !important;
-        color: #f0e6ff !important;
+        background-color: #12071f !important;
+        border: 1.5px solid #7c3aed !important;
+        border-radius: 10px !important;
+        color: #f5f3ff !important;
         font-family: 'Tajawal', sans-serif !important;
-        font-size: 0.92rem !important;
+        font-size: 0.9rem !important;
         direction: rtl !important;
         caret-color: #e8d5f8 !important;
     }
@@ -846,77 +888,257 @@ def process_files(uploaded_files, days, periods, statuses, teacher_map=None):
     return results, errors
 
 
+# ── إعدادات الدورة الافتراضية + حفظ محلي ─────────────────────────────────────
+DEFAULT_DAYS = "الإثنين\nالثلاثاء\nالأربعاء\nالخميس\nالجمعة\nالسبت\nالأحد"
+DEFAULT_PERIODS = "فجراً\nضحى\nظهراً\nعصراً\nليلاً"
+DEFAULT_STATUSES = (
+    "أنهت المقرر\nلم تنه المقرر\nساكنة\nمنسحبة\nأخرجتها الإدارة لأنها مخالفة\n"
+    "لا يوجد واتس\nتم نقلها لغير مجموعة"
+)
+DEFAULT_PERIOD_SCHEDULE = (
+    "فجراً: 4:00-8:45\nضحى: 9:00-11:45\nظهراً: 12:00-15:45\n"
+    "عصراً: 16:00-18:45\nليلاً: 19:00-21:30"
+)
+SETTINGS_COOKIE_KEY = "alm_course_settings_v1"
+
+
+def _get_cookie_manager():
+    if not HAS_COOKIE_MGR:
+        return None
+    return stx.CookieManager(key="alm_cookie_mgr")
+
+
+def load_persisted_settings(cookie_manager):
+    """تحميل الإعدادات المحفوظة محلياً (كوكي المتصفح) مرة واحدة."""
+    # ضمان وجود قيم للودجات حتى قبل وصول الكوكي
+    st.session_state.setdefault("cfg_days", DEFAULT_DAYS)
+    st.session_state.setdefault("cfg_periods", DEFAULT_PERIODS)
+    st.session_state.setdefault("cfg_statuses", DEFAULT_STATUSES)
+    st.session_state.setdefault("cfg_period_schedule", DEFAULT_PERIOD_SCHEDULE)
+
+    if st.session_state.get("_settings_from_cookie"):
+        return
+
+    if cookie_manager is None:
+        st.session_state["_settings_from_cookie"] = True
+        return
+
+    try:
+        raw = cookie_manager.get(SETTINGS_COOKIE_KEY)
+    except Exception:
+        raw = None
+
+    if raw:
+        try:
+            saved = json.loads(raw) if isinstance(raw, str) else raw
+            if isinstance(saved, dict):
+                st.session_state["cfg_days"] = saved.get("days", DEFAULT_DAYS)
+                st.session_state["cfg_periods"] = saved.get("periods", DEFAULT_PERIODS)
+                st.session_state["cfg_statuses"] = saved.get("statuses", DEFAULT_STATUSES)
+                st.session_state["cfg_period_schedule"] = saved.get(
+                    "period_schedule", DEFAULT_PERIOD_SCHEDULE
+                )
+        except Exception:
+            pass
+        st.session_state["_settings_from_cookie"] = True
+        return
+
+    # أول تحميل قد يعود None قبل جاهزية مكوّن الكوكي → إعادة محاولة لمرة واحدة
+    if not st.session_state.get("_cookie_retry_done"):
+        st.session_state["_cookie_retry_done"] = True
+        return
+
+    st.session_state["_settings_from_cookie"] = True
+
+
+def persist_settings_to_browser(cookie_manager):
+    """حفظ إعدادات الشريط الجانبي في كوكي المتصفح."""
+    payload = {
+        "days": st.session_state.get("cfg_days", DEFAULT_DAYS),
+        "periods": st.session_state.get("cfg_periods", DEFAULT_PERIODS),
+        "statuses": st.session_state.get("cfg_statuses", DEFAULT_STATUSES),
+        "period_schedule": st.session_state.get("cfg_period_schedule", DEFAULT_PERIOD_SCHEDULE),
+    }
+    # نسخة احتياطية داخل الجلسة
+    st.session_state["_last_saved_settings"] = payload
+    if cookie_manager is None:
+        return
+    try:
+        cookie_manager.set(
+            SETTINGS_COOKIE_KEY,
+            json.dumps(payload, ensure_ascii=False),
+            expires_at=datetime.datetime.now() + datetime.timedelta(days=400),
+            key="alm_set_settings_cookie",
+        )
+    except Exception:
+        pass
+
+
+def render_separate_downloads(files_dict, key_prefix, zip_name=None):
+    """تنزيل ZIP + تنزيل منفصل لكل ملف + زر لتنزيل الكل كملفات منفصلة."""
+    if not files_dict:
+        return
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fname, fbytes in files_dict.items():
+            zf.writestr(fname, fbytes)
+    zip_buffer.seek(0)
+
+    st.download_button(
+        label="⬇️ تحميل الكل — ZIP (" + str(len(files_dict)) + " ملف)",
+        data=zip_buffer,
+        file_name=zip_name or (key_prefix + ".zip"),
+        mime="application/zip",
+        use_container_width=True,
+        key=key_prefix + "_zip",
+    )
+
+    st.markdown("##### 📂 تنزيل منفصل")
+    # زر واحد يُنزّل كل الملفات كملفات مستقلة (بدون ZIP)
+    items = []
+    total_b64 = 0
+    for name, data in files_dict.items():
+        b64 = base64.b64encode(data).decode("ascii")
+        total_b64 += len(b64)
+        items.append({"name": name, "b64": b64})
+
+    if total_b64 < 12_000_000:
+        files_json = json.dumps(items, ensure_ascii=False)
+        components.html(
+            f"""
+            <div style="font-family:Tajawal,sans-serif;direction:rtl;">
+              <button id="dl_all" style="width:100%;padding:11px 14px;border:none;border-radius:11px;
+                background:linear-gradient(135deg,#0f766e,#0d9488);color:#fff;font-weight:800;
+                cursor:pointer;font-size:0.95rem;box-shadow:0 4px 14px rgba(13,148,136,0.35);">
+                ⬇️ تنزيل الكل منفصلاً ({len(items)} ملف)
+              </button>
+              <div id="hint" style="margin-top:6px;font-size:0.75rem;color:#64748b;text-align:center;">
+                قد يطلب المتصفح السماح بتنزيلات متعددة
+              </div>
+            </div>
+            <script>
+              const files = {files_json};
+              const btn = document.getElementById('dl_all');
+              btn.addEventListener('click', async () => {{
+                btn.disabled = true;
+                btn.textContent = 'جارٍ التنزيل...';
+                for (const f of files) {{
+                  const a = document.createElement('a');
+                  a.href = 'data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,' + f.b64;
+                  a.download = f.name;
+                  document.body.appendChild(a);
+                  a.click();
+                  a.remove();
+                  await new Promise(r => setTimeout(r, 450));
+                }}
+                btn.disabled = false;
+                btn.textContent = '⬇️ تنزيل الكل منفصلاً (' + files.length + ' ملف)';
+              }});
+            </script>
+            """,
+            height=78,
+        )
+    else:
+        st.caption("الملفات كبيرة — استخدمي الأزرار الفردية أو ZIP.")
+
+    cols = st.columns(2)
+    for i, (fname, fbytes) in enumerate(files_dict.items()):
+        with cols[i % 2]:
+            st.download_button(
+                label="📄 " + fname,
+                data=fbytes,
+                file_name=fname,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                key=f"{key_prefix}_file_{i}",
+            )
+
+
 # ── Sidebar ───────────────────────────────────────────────────────────────────
+cookie_manager = _get_cookie_manager()
+load_persisted_settings(cookie_manager)
+
 with st.sidebar:
     # ── لوغو السايدبار ────────────────────────────────────────────────────────
     if LOGO_SRC:
         st.markdown(
             f"""
-            <div style='text-align:center; padding:1rem 0 0.3rem;'>
-                <img src="{LOGO_SRC}" style='width:90px; border-radius:12px;
-                box-shadow:0 4px 16px rgba(0,0,0,0.3);'>
-                <div style='font-size:1rem; font-weight:900; color:#e8d5f8; margin-top:0.6rem;'>إعدادات الدورة</div>
-                <div style='font-size:0.78rem; color:#c4a0e8; margin-top:3px;'>خصّصي القيم لكل دورة</div>
+            <div style='text-align:center; padding:0.6rem 0 0.2rem;'>
+                <img src="{LOGO_SRC}" style='width:82px; border-radius:14px;
+                box-shadow:0 6px 20px rgba(0,0,0,0.35); border:2px solid rgba(167,139,250,0.35);'>
+                <div style='font-size:1.05rem; font-weight:900; color:#f5f3ff; margin-top:0.7rem;'>إعدادات الدورة</div>
+                <div style='font-size:0.75rem; color:#c4b5fd; margin-top:4px;'>تُحفظ تلقائياً على هذا الجهاز</div>
             </div>
-            <hr style='border-color:rgba(255,255,255,0.15); margin:0.8rem 0;'>
             """,
             unsafe_allow_html=True,
         )
     else:
         st.markdown(
             """
-            <div style='text-align:center; padding:1rem 0 0.5rem;'>
-                <div style='font-size:2.5rem'>📖</div>
-                <div style='font-size:1.2rem; font-weight:900; color:#e8d5f8;'>إعدادات الدورة</div>
-                <div style='font-size:0.8rem; color:#c4a0e8; margin-top:4px;'>خصّصي القيم لكل دورة</div>
+            <div style='text-align:center; padding:0.8rem 0 0.3rem;'>
+                <div style='font-size:2.2rem'>📖</div>
+                <div style='font-size:1.1rem; font-weight:900; color:#f5f3ff;'>إعدادات الدورة</div>
+                <div style='font-size:0.75rem; color:#c4b5fd; margin-top:4px;'>تُحفظ تلقائياً على هذا الجهاز</div>
             </div>
-            <hr style='border-color:rgba(168,216,120,0.3); margin:0.8rem 0;'>
             """,
             unsafe_allow_html=True,
         )
 
+    st.markdown("<div class='sidebar-card-title'>📅 أيام الأسبوع</div>", unsafe_allow_html=True)
     days_text = st.text_area(
-        "📅 أيام الأسبوع",
-        value="الإثنين\nالثلاثاء\nالأربعاء\nالخميس\nالجمعة\nالسبت\nالأحد",
-        height=160,
+        "أيام الأسبوع",
+        height=150,
         help="كل يوم في سطر منفصل",
-    )
-    periods_text = st.text_area(
-        "⏰ الفترات",
-        value="فجراً\nضحى\nظهراً\nعصراً\nليلاً",
-        height=140,
-        help="كل فترة في سطر منفصل",
-    )
-    statuses_text = st.text_area(
-        "📋 قائمة الحالات",
-        value="أنهت المقرر\nلم تنه المقرر\nساكنة\nمنسحبة\nأخرجتها الإدارة لأنها مخالفة\nلا يوجد واتس\nتم نقلها لغير مجموعة",
-        height=175,
-        help="كل حالة في سطر منفصل",
+        key="cfg_days",
+        label_visibility="collapsed",
     )
 
+    st.markdown("<div class='sidebar-card-title'>⏰ الفترات</div>", unsafe_allow_html=True)
+    periods_text = st.text_area(
+        "الفترات",
+        height=130,
+        help="كل فترة في سطر منفصل",
+        key="cfg_periods",
+        label_visibility="collapsed",
+    )
+
+    st.markdown("<div class='sidebar-card-title'>📋 قائمة الحالات</div>", unsafe_allow_html=True)
+    statuses_text = st.text_area(
+        "قائمة الحالات",
+        height=160,
+        help="كل حالة في سطر منفصل",
+        key="cfg_statuses",
+        label_visibility="collapsed",
+    )
+
+    st.markdown("<div class='sidebar-card-title'>🕐 أوقات الفترات (للمطابقة)</div>", unsafe_allow_html=True)
     periods_schedule_text = st.text_area(
-        "🕐 أوقات الفترات (للمطابقة)",
-        value="فجراً: 4:00-8:45\nضحى: 9:00-11:45\nظهراً: 12:00-15:45\nعصراً: 16:00-18:45\nليلاً: 19:00-21:30",
-        height=145,
-        help="النسق: اسم الفترة: HH:MM-HH:MM\nيُستخدم للتحقق من تطابق الوقت مع الفترة",
+        "أوقات الفترات",
+        height=140,
+        help="النسق: اسم الفترة: HH:MM-HH:MM",
+        key="cfg_period_schedule",
+        label_visibility="collapsed",
     )
 
     days_list = parse_list(days_text)
     periods_list = parse_list(periods_text)
     statuses_list = parse_list(statuses_text)
 
-    # بناء جدول الفترات من النص
     def parse_period_schedule(text):
         """فجراً: 4:00-8:45 → [("فجراً", 240, 525)]"""
         schedule = []
         for line in text.strip().splitlines():
             line = line.strip()
-            if ":" not in line: continue
+            if ":" not in line:
+                continue
             parts = line.split(":", 1)
-            if len(parts) < 2: continue
+            if len(parts) < 2:
+                continue
             name = parts[0].strip()
             times = parts[1].strip()
-            if "-" not in times: continue
+            if "-" not in times:
+                continue
             t_parts = times.split("-")
             try:
                 def to_min(t):
@@ -930,13 +1152,43 @@ with st.sidebar:
 
     period_schedule = parse_period_schedule(periods_schedule_text)
 
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("💾 حفظ", use_container_width=True, key="btn_save_settings"):
+            persist_settings_to_browser(cookie_manager)
+            st.toast("تم حفظ الإعدادات على هذا الجهاز")
+    with c2:
+        if st.button("↩️ افتراضي", use_container_width=True, key="btn_reset_settings"):
+            st.session_state["cfg_days"] = DEFAULT_DAYS
+            st.session_state["cfg_periods"] = DEFAULT_PERIODS
+            st.session_state["cfg_statuses"] = DEFAULT_STATUSES
+            st.session_state["cfg_period_schedule"] = DEFAULT_PERIOD_SCHEDULE
+            st.session_state["_last_saved_settings"] = None
+            persist_settings_to_browser(cookie_manager)
+            st.rerun()
+
+    # الحفظ التلقائي بعد الأزرار لتفادي تعارض مفاتيح الكوكي في نفس الدورة
+    _current_payload = {
+        "days": st.session_state.get("cfg_days", days_text),
+        "periods": st.session_state.get("cfg_periods", periods_text),
+        "statuses": st.session_state.get("cfg_statuses", statuses_text),
+        "period_schedule": st.session_state.get("cfg_period_schedule", periods_schedule_text),
+    }
+    if st.session_state.get("_last_saved_settings") != _current_payload:
+        # تجنّب set مكرر إذا ضغطت «حفظ» للتو في نفس الدورة
+        if not st.session_state.get("btn_save_settings"):
+            persist_settings_to_browser(cookie_manager)
+
     st.markdown(
-        "<div style='margin-top:1rem; padding:0.8rem; background:rgba(255,255,255,0.08);"
-        "border-radius:8px; font-size:0.82rem; color:#c4a0e8;'>"
-        "✅ " + str(len(days_list)) + " أيام &nbsp;|&nbsp; ✅ "
-        + str(len(periods_list)) + " فترات &nbsp;|&nbsp; ✅ "
-        + str(len(statuses_list)) + " حالة &nbsp;|&nbsp; ✅ "
-        + str(len(period_schedule)) + " أوقات مطابقة</div>",
+        "<div class='sidebar-summary'>"
+        "<b>الملخص:</b><br>"
+        "✅ " + str(len(days_list)) + " أيام &nbsp;·&nbsp; ✅ "
+        + str(len(periods_list)) + " فترات<br>✅ "
+        + str(len(statuses_list)) + " حالة &nbsp;·&nbsp; ✅ "
+        + str(len(period_schedule)) + " أوقات مطابقة"
+        + ("<br><span style='opacity:.85'>💾 الحفظ المحلي مفعّل</span>" if HAS_COOKIE_MGR else
+           "<br><span style='opacity:.85'>⚠️ ثبّتي extra-streamlit-components للحفظ المحلي</span>")
+        + "</div>",
         unsafe_allow_html=True,
     )
 
@@ -1114,20 +1366,7 @@ if uploaded_files:
             st.markdown('<div class="section-title">📦 تحميل الملفات</div>', unsafe_allow_html=True)
             preview_data = [{"اسم الملف الناتج": fname, "الحالة": "✅ جاهز"} for fname in results]
             st.dataframe(pd.DataFrame(preview_data), use_container_width=True, hide_index=True)
-
-            zip_buffer = io.BytesIO()
-            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-                for fname, fbytes in results.items():
-                    zf.writestr(fname, fbytes)
-            zip_buffer.seek(0)
-
-            st.download_button(
-                label="⬇️ تحميل جميع الملفات (" + str(len(results)) + " ملف) — ZIP",
-                data=zip_buffer,
-                file_name="جداول_المعلمات.zip",
-                mime="application/zip",
-                use_container_width=True,
-            )
+            render_separate_downloads(results, key_prefix="stage1_dl", zip_name="جداول_المعلمات.zip")
 
 
 
@@ -1846,8 +2085,8 @@ if uploaded_stage2:
             stage2_results    = {}
             stage2_errors     = []
             day_reports       = {}
-            time_fmt_warnings = {}  # {fname: [(row_idx, raw_val)]}
-            period_warnings   = {}  # {fname: [(row_idx, actual, correct)]}
+            time_fmt_warnings = {}
+            period_warnings   = {}
             total_red = total_issues = 0
 
             for uf in uploaded_stage2:
@@ -1856,9 +2095,7 @@ if uploaded_stage2:
                     out_bytes, n_colored, _, n_issues, d_report, t_errors, p_mismatches, teacher_name = process_stage2_file(
                         fb, days_list, statuses_list, periods_list, period_schedule
                     )
-                    # اسم العرض = اسم المعلمة من العمود، وإلا اسم الملف (بدون الامتداد)
                     display_name = teacher_name.strip() if teacher_name else uf.name.rsplit(".", 1)[0]
-                    # تجنّب الكتابة فوق ملف/تقرير عند تكرار الاسم
                     unique_name = display_name
                     n = 2
                     while (unique_name + ".xlsx") in stage2_results or unique_name in day_reports:
@@ -1868,7 +2105,6 @@ if uploaded_stage2:
                     stage2_results[out_name] = out_bytes
                     total_red    += n_colored
                     total_issues += n_issues
-                    # إدراج كل الملفات في التقرير (وليس فقط ذات المشاكل)
                     if d_report:
                         day_reports[unique_name] = d_report
                     if t_errors:
@@ -1878,10 +2114,26 @@ if uploaded_stage2:
                 except Exception as e:
                     stage2_errors.append("❌ " + uf.name + ": " + str(e))
 
+            st.session_state["stage2_results"] = stage2_results
+            st.session_state["stage2_errors"] = stage2_errors
+            st.session_state["stage2_day_reports"] = day_reports
+            st.session_state["stage2_time_fmt_warnings"] = time_fmt_warnings
+            st.session_state["stage2_period_warnings"] = period_warnings
+            st.session_state["stage2_total_red"] = total_red
+            st.session_state["stage2_total_issues"] = total_issues
+
+    if st.session_state.get("stage2_results") is not None:
+        stage2_results = st.session_state["stage2_results"]
+        stage2_errors = st.session_state.get("stage2_errors", [])
+        day_reports = st.session_state.get("stage2_day_reports", {})
+        time_fmt_warnings = st.session_state.get("stage2_time_fmt_warnings", {})
+        period_warnings = st.session_state.get("stage2_period_warnings", {})
+        total_red = st.session_state.get("stage2_total_red", 0)
+        total_issues = st.session_state.get("stage2_total_issues", 0)
+
         for e in stage2_errors:
             st.error(e)
 
-        # ── تنبيهات تنسيق التوقيت ────────────────────────────────────────────
         if time_fmt_warnings:
             st.markdown('<div class="section-title">⚠️ تنبيهات تنسيق التوقيت</div>', unsafe_allow_html=True)
             for fname, errors in time_fmt_warnings.items():
@@ -1889,7 +2141,6 @@ if uploaded_stage2:
                 st.warning(f"📄 **{fname}** — خلايا التوقيت مُنسَّقة كتاريخ وليس ساعة: {rows_str}")
             st.info("💡 الحل: افتحي الملف الأصلي، حددي عمود التوقيت، وغيّري تنسيق الخلايا إلى 'وقت' (hh:mm)")
 
-        # ── تنبيهات عدم تطابق الفترة ─────────────────────────────────────────
         if period_warnings:
             st.markdown('<div class="section-title">🕐 تعارض الفترة مع الوقت</div>', unsafe_allow_html=True)
             for fname, mismatches in period_warnings.items():
@@ -1917,7 +2168,6 @@ if uploaded_stage2:
                 )
                 st.markdown('<div class="stat-card"><div class="number" style="color:#555">' + str(under_or_over) + '</div><div class="label">أيام غير متوازنة 📊</div></div>', unsafe_allow_html=True)
 
-            # ── تقرير توزيع الأيام — ملف Excel واحد ──────────────────────────
             if day_reports:
                 report_bytes = build_distribution_report(day_reports)
                 has_any_issue = any(
@@ -1939,21 +2189,8 @@ if uploaded_stage2:
                     key="report_download",
                 )
 
-            zip2 = io.BytesIO()
-            with zipfile.ZipFile(zip2, "w", zipfile.ZIP_DEFLATED) as zf:
-                for fname, fbytes in stage2_results.items():
-                    zf.writestr(fname, fbytes)
-            zip2.seek(0)
-
             st.markdown('<div class="section-title">📦 تحميل الملفات المُدققة</div>', unsafe_allow_html=True)
-            st.download_button(
-                label="⬇️ تحميل جميع الملفات المُعالجة — ZIP",
-                data=zip2,
-                file_name="مراجعة_المعلمات.zip",
-                mime="application/zip",
-                use_container_width=True,
-                key="stage2_download",
-            )
+            render_separate_downloads(stage2_results, key_prefix="stage2_dl", zip_name="مراجعة_المعلمات.zip")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # المرحلة الثالثة — تجميع ملفات المعلمات في ملف لجان واحد
