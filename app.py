@@ -1434,10 +1434,10 @@ KEYWORD_CAMERA = "كاميرا"
 COLOR_RED      = "#FF9999"   # كاميرا — صف كامل
 COLOR_ORANGE   = "#FFB347"   # ملاحظة جوهرية — خلية الاسم
 COLOR_YELLOW   = "#FFFF99"   # شرطي فقط — خلية الحالة
-COLOR_PURPLE   = "#D7BDE2"   # حالة فارغة — خلية الحالة
+COLOR_PURPLE   = "#CE93D8"   # حالة فارغة — خلية الحالة (بنفسجي واضح)
 COLOR_BLUE     = "#AED6F1"   # نقص يوم/فترة إلزامي — الخلية الناقصة
 COLOR_TEAL     = "#76D7C4"   # عدم تطابق الفترة مع الوقت — خلية الفترة
-COLOR_PINK     = "#F5B7B1"   # حقول اختبار غير مطلوبة — الخلية الزائدة
+COLOR_PINK     = "#F5B7B1"   # يوم/وقت/فترة معبأة رغم أن الحالة ليست «أنهت المقرر»
 COLOR_HEADER   = "#D9D9D9"
 
 ISSUE_EMPTY_STATUS    = "empty_status"
@@ -1817,15 +1817,27 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list, peri
         issue_cells.setdefault(row_i, {})[col_name] = issue_type
 
     def is_blank(val):
-        s = str(val).strip() if val is not None else ""
-        return (not s) or s.lower() == "nan"
+        if val is None:
+            return True
+        try:
+            if pd.isna(val):
+                return True
+        except Exception:
+            pass
+        s = str(val).strip()
+        return (not s) or s.lower() in ("nan", "none", "nat", "<na>")
 
     for idx, row in df.iterrows():
-        status   = str(row.get(col_map["status"] or "الحالة",          "")).strip()
-        day      = str(row.get(col_map["day"]    or "يوم الاختبار",    "")).strip()
-        note     = str(row.get(col_map["notes"]  or "الملاحظات",       "")).strip()
-        time_raw = row.get(col_map["time"]        or "توقيت الاختبار", "")
-        period   = str(row.get(col_map["period"]  or "الفترة",         "")).strip()
+        status_raw = row.get(col_map["status"] or "الحالة", "")
+        day_raw    = row.get(col_map["day"]    or "يوم الاختبار", "")
+        note_raw   = row.get(col_map["notes"]  or "الملاحظات", "")
+        time_raw   = row.get(col_map["time"]   or "توقيت الاختبار", "")
+        period_raw = row.get(col_map["period"] or "الفترة", "")
+
+        status = "" if is_blank(status_raw) else str(status_raw).strip()
+        day    = "" if is_blank(day_raw)    else str(day_raw).strip()
+        note   = "" if is_blank(note_raw)   else str(note_raw).strip()
+        period = "" if is_blank(period_raw) else str(period_raw).strip()
 
         # تحقق من تنسيق التوقيت — قيمة عددية >= 1 تعني تاريخ وليس ساعة H:MM
         try:
@@ -1980,16 +1992,17 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list, peri
                 return normal_fmt
 
             def write_issue_or_normal(prefer_shurty_status=False, prefer_note_name=False):
+                # ألوان المشاكل أولاً حتى لا يغطي الأصفر (شرطي) الحالة الفارغة
+                if cn in row_issues:
+                    itype = row_issues[cn]
+                    pair = issue_fmts[itype]
+                    write_cell(pair["cell"], time_f=pair["time"])
+                    return
                 if prefer_shurty_status and cn == "الحالة":
                     write_cell(yellow_cell)
                     return
                 if prefer_note_name and cn == "الاسم":
                     write_cell(note_name_fmt)
-                    return
-                if cn in row_issues:
-                    itype = row_issues[cn]
-                    pair = issue_fmts[itype]
-                    write_cell(pair["cell"], time_f=pair["time"])
                     return
                 write_cell(normal_f(), phone_f=phone_fmt, time_f=time_fmt)
 
@@ -2071,10 +2084,10 @@ if uploaded_stage2:
             <span style="background:#FFFF99;padding:2px 10px;border-radius:4px;">🟡 شرطي — خلية الحالة</span> &nbsp;
             <span style="background:#FF9999;padding:2px 10px;border-radius:4px;">🔴 كاميرا — صف كامل</span> &nbsp;
             <span style="background:#FFB347;padding:2px 10px;border-radius:4px;">🟠 ملاحظة جوهرية — خلية الاسم</span><br>
-            <span style="background:#D7BDE2;padding:2px 10px;border-radius:4px;">🟣 حالة فارغة</span> &nbsp;
-            <span style="background:#AED6F1;padding:2px 10px;border-radius:4px;">🔵 نقص يوم/فترة</span> &nbsp;
+            <span style="background:#CE93D8;padding:2px 10px;border-radius:4px;">🟣 حالة فارغة — يجب تعبئة الحالة</span> &nbsp;
+            <span style="background:#AED6F1;padding:2px 10px;border-radius:4px;">🔵 نقص يوم/فترة لمن أنهت المقرر</span><br>
             <span style="background:#76D7C4;padding:2px 10px;border-radius:4px;">🟢 عدم تطابق الفترة مع الوقت</span> &nbsp;
-            <span style="background:#F5B7B1;padding:2px 10px;border-radius:4px;">🩷 حقول اختبار غير مطلوبة</span>
+            <span style="background:#F5B7B1;padding:2px 10px;border-radius:4px;">🩷 يوم/وقت/فترة معبأة وحالتها ليست «أنهت المقرر»</span>
         </div>
         """,
         unsafe_allow_html=True,
