@@ -975,7 +975,7 @@ def persist_settings_to_browser(cookie_manager):
 
 
 def render_batch_separate_download(files_dict, widget_key="batch_sep"):
-    """زر واحد لتنزيل كل الملفات كملفات مستقلة (بدون ZIP)."""
+    """تنزيل كل الملفات في مجلد واحد: اختيار المجلد مرة واحدة ثم الحفظ تلقائياً."""
     if not files_dict:
         return
     items = []
@@ -988,36 +988,104 @@ def render_batch_separate_download(files_dict, widget_key="batch_sep"):
         st.caption("الملفات كبيرة للتنزيل الجماعي المنفصل — استخدمي ZIP أو التنزيل الفردي.")
         return
     files_json = json.dumps(items, ensure_ascii=False)
+    # نفتح نافذة مستقلة (وليس داخل iframe ستريملت) لأن showDirectoryPicker
+    # غالباً يُحجب داخل الإطار، بينما يعمل في نافذة عادية: اختيار مجلد مرة واحدة ثم حفظ الكل.
     components.html(
         f"""
-        <div style="font-family:Tajawal,sans-serif;direction:rtl;">
+        <div style="font-family:Tajawal,Tahoma,sans-serif;direction:rtl;">
           <button id="dl_all_{widget_key}" style="width:100%;padding:12px 14px;border:none;border-radius:12px;
             background:linear-gradient(135deg,#0f766e,#0d9488);color:#fff;font-weight:800;
             cursor:pointer;font-size:0.95rem;box-shadow:0 4px 14px rgba(13,148,136,0.3);">
-            ⬇️ تنزيل الجميع منفصلاً ({len(items)})
+            ⬇️ تنزيل الجميع منفصلاً — مجلد واحد ({len(items)})
           </button>
+          <div id="dl_msg_{widget_key}" style="margin-top:6px;font-size:0.75rem;color:#64748b;text-align:center;min-height:1.1em;">
+            ستظهر نافذة: اختاري المجلد مرة واحدة ثم تُحفظ كل الملفات فيه تلقائياً
+          </div>
         </div>
         <script>
           const files_{widget_key} = {files_json};
           const btn_{widget_key} = document.getElementById('dl_all_{widget_key}');
-          btn_{widget_key}.addEventListener('click', async () => {{
-            btn_{widget_key}.disabled = true;
-            btn_{widget_key}.textContent = 'جارٍ التنزيل...';
-            for (const f of files_{widget_key}) {{
-              const a = document.createElement('a');
-              a.href = 'data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,' + f.b64;
-              a.download = f.name;
-              document.body.appendChild(a);
-              a.click();
-              a.remove();
-              await new Promise(r => setTimeout(r, 450));
+          const msg_{widget_key} = document.getElementById('dl_msg_{widget_key}');
+
+          btn_{widget_key}.addEventListener('click', () => {{
+            const payload = JSON.stringify(files_{widget_key});
+            const html = `<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <title>حفظ ملفات المعلمات</title>
+  <style>
+    body {{ font-family: Tajawal, Tahoma, sans-serif; background:#F8F7FC; color:#3b0f72;
+      display:flex; align-items:center; justify-content:center; min-height:100vh; margin:0; }}
+    .card {{ background:#fff; border:1px solid #e0d0f8; border-radius:18px; padding:2rem;
+      max-width:420px; width:90%; text-align:center; box-shadow:0 8px 28px rgba(59,15,114,0.08); }}
+    h1 {{ font-size:1.25rem; margin:0 0 0.5rem; }}
+    p {{ color:#6b7280; font-size:0.92rem; line-height:1.7; }}
+    button {{ margin-top:1rem; width:100%; padding:14px; border:none; border-radius:12px;
+      background:linear-gradient(135deg,#3b0f72,#7c3aed); color:#fff; font-weight:800;
+      font-size:1rem; cursor:pointer; font-family:inherit; }}
+    button:disabled {{ opacity:0.7; cursor:wait; }}
+    #msg {{ margin-top:0.9rem; font-size:0.85rem; color:#0f766e; min-height:1.3em; }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>حفظ الملفات في مجلد واحد</h1>
+    <p>اضغطي الزر، اختاري المجلد مرة واحدة فقط، ثم تُحفظ كل الملفات تلقائياً في نفس المكان دون سؤال متكرر.</p>
+    <button id="go">اختيار المجلد وحفظ الكل (${{files_{widget_key}.length}} ملف)</button>
+    <div id="msg"></div>
+  </div>
+  <script>
+    const files = ${{payload}};
+    function b64ToBytes(b64) {{
+      const bin = atob(b64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return bytes;
+    }}
+    const go = document.getElementById('go');
+    const msg = document.getElementById('msg');
+    go.addEventListener('click', async () => {{
+      if (!window.showDirectoryPicker) {{
+        msg.textContent = 'هذا المتصفح لا يدعم اختيار مجلد. استخدمي Chrome أو Edge.';
+        return;
+      }}
+      go.disabled = true;
+      try {{
+        const dirHandle = await window.showDirectoryPicker({{ mode: 'readwrite' }});
+        let done = 0;
+        for (const f of files) {{
+          msg.textContent = 'جارٍ الحفظ: ' + f.name + ' (' + (done + 1) + '/' + files.length + ')';
+          const fileHandle = await dirHandle.getFileHandle(f.name, {{ create: true }});
+          const writable = await fileHandle.createWritable();
+          await writable.write(b64ToBytes(f.b64));
+          await writable.close();
+          done += 1;
+        }}
+        msg.textContent = 'تم حفظ ' + done + ' ملف بنجاح. يمكن إغلاق هذه النافذة.';
+        go.textContent = 'تم الحفظ';
+      }} catch (err) {{
+        go.disabled = false;
+        if (err && err.name === 'AbortError') msg.textContent = 'تم إلغاء اختيار المجلد';
+        else msg.textContent = 'تعذّر الحفظ. تأكدي من منح صلاحية الكتابة للمجلد.';
+      }}
+    }});
+  <\/script>
+</body>
+</html>`;
+            const blob = new Blob([html], {{ type: 'text/html;charset=utf-8' }});
+            const url = URL.createObjectURL(blob);
+            const w = window.open(url, '_blank');
+            if (!w) {{
+              msg_{widget_key}.textContent = 'اسمحي بالنوافذ المنبثقة ثم أعيدي المحاولة';
+            }} else {{
+              msg_{widget_key}.textContent = 'فُتحت نافذة الحفظ — اختاري المجلد مرة واحدة فقط';
             }}
-            btn_{widget_key}.disabled = false;
-            btn_{widget_key}.textContent = '⬇️ تنزيل الجميع منفصلاً (' + files_{widget_key}.length + ')';
+            setTimeout(() => URL.revokeObjectURL(url), 60000);
           }});
         </script>
         """,
-        height=56,
+        height=78,
     )
 
 
