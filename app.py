@@ -1269,22 +1269,11 @@ with st.sidebar:
 
     period_schedule = parse_period_schedule(periods_schedule_text)
 
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("💾 حفظ", use_container_width=True, key="btn_save_settings"):
-            persist_settings_to_browser(cookie_manager)
-            st.toast("تم حفظ الإعدادات على هذا الجهاز")
-    with c2:
-        if st.button("↩️ افتراضي", use_container_width=True, key="btn_reset_settings"):
-            st.session_state["cfg_days"] = DEFAULT_DAYS
-            st.session_state["cfg_periods"] = DEFAULT_PERIODS
-            st.session_state["cfg_statuses"] = DEFAULT_STATUSES
-            st.session_state["cfg_period_schedule"] = DEFAULT_PERIOD_SCHEDULE
-            st.session_state["_last_saved_settings"] = None
-            persist_settings_to_browser(cookie_manager)
-            st.rerun()
+    if st.button("💾 حفظ الإعدادات", use_container_width=True, key="btn_save_settings"):
+        persist_settings_to_browser(cookie_manager)
+        st.toast("تم حفظ الإعدادات على هذا الجهاز")
 
-    # الحفظ التلقائي بعد الأزرار لتفادي تعارض مفاتيح الكوكي في نفس الدورة
+    # الحفظ التلقائي بعد الزر لتفادي تعارض مفاتيح الكوكي في نفس الدورة
     _current_payload = {
         "days": st.session_state.get("cfg_days", days_text),
         "periods": st.session_state.get("cfg_periods", periods_text),
