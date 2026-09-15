@@ -2468,25 +2468,49 @@ def build_stage3_file(files_dict, days_list, existing_bytes=None):
     combined = combined[combined["الاسم"] != ""].reset_index(drop=True)
 
     # ── تقسيم الأوراق ────────────────────────────────────────────────────────
-    # شرطي (من الملاحظات، وأحياناً الحالة) تُدرج مع المتقدمات مع تمييز أصفر
+    # الترتيب: اختبار مبكر → (يوم+موعد أو شرطي أو أنهت المقرر) → المتقدمات
+    #           وإلا → غير متقدمات
+    def _cell_filled(val):
+        s = str(val or "").strip()
+        return bool(s) and s.lower() not in ("nan", "none", "nat", "<na>")
+
     def _has_shurty(notes_val, status_val=""):
         note = str(notes_val or "")
         st   = str(status_val or "")
         return (KEYWORD_RED in note) or (KEYWORD_RED in st)
 
-    mask_early = combined["الملاحظات"].str.contains("قدمت الاختبار", na=False)
+    mask_early = combined["الملاحظات"].astype(str).str.contains(
+        "قدمت الاختبار", na=False
+    )
     mask_shurty = (~mask_early) & combined.apply(
         lambda r: _has_shurty(r["الملاحظات"], r["الحالة"]), axis=1
     )
-    mask_finished = (
-        ((combined["الحالة"] == "أنهت المقرر") | mask_shurty) & (~mask_early)
+    # موعد مكتمل: يوم الاختبار + توقيت الاختبار معاً → متقدمة بغض النظر عن «لم تنه المقرر»
+    mask_has_slot = (~mask_early) & combined.apply(
+        lambda r: _cell_filled(r["يوم الاختبار"]) and _cell_filled(r["توقيت الاختبار"]),
+        axis=1,
     )
-    mask_others = (~mask_finished) & (~mask_early)
+    mask_finished_course = combined["الحالة"].astype(str).str.strip() == "أنهت المقرر"
+    mask_applicants = (~mask_early) & (
+        mask_finished_course | mask_shurty | mask_has_slot
+    )
+    mask_others = (~mask_applicants) & (~mask_early)
 
-    df_finished = combined[mask_finished].copy()
+    df_finished = combined[mask_applicants].copy()
     df_others   = combined[mask_others].copy()
     df_early    = combined[mask_early].copy()
-    df_finished["_is_shurty"] = mask_shurty.loc[df_finished.index].values
+    # أصفر على الحالة: شرطي صراحة، أو موعد مع حالة ليست «أنهت المقرر» (تمييز شرطي)
+    df_finished["_is_shurty"] = (
+        mask_shurty.loc[df_finished.index]
+        | (
+            mask_has_slot.loc[df_finished.index]
+            & ~mask_finished_course.loc[df_finished.index]
+        )
+    ).values
+    # إحصاء الشرطي للعرض = كل من يُبرز بالأصفر في المتقدمات
+    mask_shurty_highlight = mask_shurty | (
+        mask_has_slot & ~mask_finished_course & ~mask_early
+    )
 
     # ── الترتيب ──────────────────────────────────────────────────────────────
     df_finished["_day"]  = df_finished["يوم الاختبار"].apply(lambda x: day_sort_key(x, days_list))
@@ -2570,7 +2594,7 @@ def build_stage3_file(files_dict, days_list, existing_bytes=None):
 
     workbook.close()
     output.seek(0)
-    n_shurty = int(mask_shurty.sum())
+    n_shurty = int(mask_shurty_highlight.sum())
     return output.read(), len(df_finished), len(df_others), len(df_early), n_shurty
 
 
