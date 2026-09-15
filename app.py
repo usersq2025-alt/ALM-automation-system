@@ -2468,18 +2468,35 @@ def build_stage3_file(files_dict, days_list, existing_bytes=None):
     combined = combined[combined["الاسم"] != ""].reset_index(drop=True)
 
     # ── تقسيم الأوراق ────────────────────────────────────────────────────────
-    mask_early    = combined["الملاحظات"].str.contains("قدمت الاختبار", na=False)
-    mask_finished = (combined["الحالة"] == "أنهت المقرر") & (~mask_early)
-    mask_others   = (~mask_finished) & (~mask_early)
+    # شرطي (من الملاحظات، وأحياناً الحالة) تُدرج مع المتقدمات مع تمييز أصفر
+    def _has_shurty(notes_val, status_val=""):
+        note = str(notes_val or "")
+        st   = str(status_val or "")
+        return (KEYWORD_RED in note) or (KEYWORD_RED in st)
+
+    mask_early = combined["الملاحظات"].str.contains("قدمت الاختبار", na=False)
+    mask_shurty = (~mask_early) & combined.apply(
+        lambda r: _has_shurty(r["الملاحظات"], r["الحالة"]), axis=1
+    )
+    mask_finished = (
+        ((combined["الحالة"] == "أنهت المقرر") | mask_shurty) & (~mask_early)
+    )
+    mask_others = (~mask_finished) & (~mask_early)
 
     df_finished = combined[mask_finished].copy()
     df_others   = combined[mask_others].copy()
     df_early    = combined[mask_early].copy()
+    df_finished["_is_shurty"] = mask_shurty.loc[df_finished.index].values
 
     # ── الترتيب ──────────────────────────────────────────────────────────────
     df_finished["_day"]  = df_finished["يوم الاختبار"].apply(lambda x: day_sort_key(x, days_list))
     df_finished["_time"] = pd.to_numeric(df_finished["توقيت الاختبار"], errors="coerce").fillna(999)
-    df_finished = df_finished.sort_values(["المعلمة", "_day", "_time"]).drop(columns=["_day", "_time"]).reset_index(drop=True)
+    df_finished = (
+        df_finished
+        .sort_values(["المعلمة", "_day", "_time"])
+        .drop(columns=["_day", "_time"])
+        .reset_index(drop=True)
+    )
 
     df_others = df_others.sort_values(["المعلمة", "الاسم"]).reset_index(drop=True)
     df_early  = df_early.sort_values(["المعلمة", "الاسم"]).reset_index(drop=True)
@@ -2498,6 +2515,12 @@ def build_stage3_file(files_dict, days_list, existing_bytes=None):
         "align": "center", "valign": "vcenter", "border": 1, "num_format": "h:mm"})
     arial_fmt = workbook.add_format({"font_name": "Arial", "font_size": 11,
         "align": "center", "valign": "vcenter", "border": 1})
+    # شرطي — خلية الحالة أصفر (نفس لون المرحلة الثانية)
+    yellow_status_fmt = workbook.add_format({
+        "font_name": "Calibri", "font_size": 11,
+        "align": "center", "valign": "vcenter", "border": 1,
+        "bg_color": COLOR_YELLOW,
+    })
 
     numeric_set = {"الرقم", "رقم الواتس اب", "المواليد"}
     col_widths  = {
@@ -2508,7 +2531,7 @@ def build_stage3_file(files_dict, days_list, existing_bytes=None):
         "الفترة": 14, "الملاحظات": 40,
     }
 
-    def write_sheet(name, df_sheet):
+    def write_sheet(name, df_sheet, highlight_shurty=False):
         ws = workbook.add_worksheet(name)
         ws.right_to_left()
         for ci, cn in enumerate(cols):
@@ -2517,9 +2540,12 @@ def build_stage3_file(files_dict, days_list, existing_bytes=None):
             ws.write(0, ci, cn, header_fmt)
         for ri, row in df_sheet.iterrows():
             er = ri + 1
+            is_shurty = bool(highlight_shurty and row.get("_is_shurty", False))
             for ci, cn in enumerate(cols):
                 val = row[cn]
-                if cn in numeric_set and val not in ("", "nan"):
+                if cn == "الحالة" and is_shurty:
+                    ws.write(er, ci, val, yellow_status_fmt)
+                elif cn in numeric_set and val not in ("", "nan"):
                     try:
                         ws.write_number(er, ci, int(str(val).replace(".0", "")), num_fmt)
                     except Exception:
@@ -2538,13 +2564,14 @@ def build_stage3_file(files_dict, days_list, existing_bytes=None):
                 else:
                     ws.write(er, ci, val, cell_fmt)
 
-    write_sheet("المتقدمات للاختبار", df_finished)
+    write_sheet("المتقدمات للاختبار", df_finished, highlight_shurty=True)
     write_sheet("غير متقدمات",        df_others)
     write_sheet("اختبار مبكر",        df_early)
 
     workbook.close()
     output.seek(0)
-    return output.read(), len(df_finished), len(df_others), len(df_early)
+    n_shurty = int(mask_shurty.sum())
+    return output.read(), len(df_finished), len(df_others), len(df_early), n_shurty
 
 
 
@@ -2634,7 +2661,7 @@ st.markdown(
     text-align:center;color:white;">
         <div style="font-size:1.8rem;font-weight:900;margin:0;">📊 المرحلة الثالثة — تجميع اللجان</div>
         <div style="font-size:0.95rem;margin:0.4rem 0 0;opacity:0.88;">
-            ارفعي ملفات المعلمات المُراجعة لتجميعها في ملف لجان واحد
+            ارفعي ملفات المعلمات المُراجعة لتجميعها في ملف لجان واحد — وطالبات «شرطي» تُدرج مع المتقدمات بلون أصفر
         </div>
     </div>
     """,
@@ -2713,21 +2740,23 @@ if uploaded_stage3:
                         existing_file.seek(0)
                         existing_bytes = existing_file.read()
 
-                    result_bytes, n_fin, n_oth, n_ear = build_stage3_file(
+                    result_bytes, n_fin, n_oth, n_ear, n_shurty = build_stage3_file(
                         files_dict, days_list, existing_bytes=existing_bytes
                     )
 
                     mode_label = "إضافة للملف الأم" if existing_bytes else "ملف جديد"
                     st.success("✅ " + mode_label + " — تم بنجاح")
 
-                    cols3 = st.columns(4)
+                    cols3 = st.columns(5)
                     with cols3[0]:
                         st.markdown('<div class="stat-card"><div class="number">' + str(len(files_dict)) + '</div><div class="label">ملف مُضاف</div></div>', unsafe_allow_html=True)
                     with cols3[1]:
                         st.markdown('<div class="stat-card"><div class="number" style="color:#1a4e1a;">' + str(n_fin) + '</div><div class="label">متقدمة ✅</div></div>', unsafe_allow_html=True)
                     with cols3[2]:
-                        st.markdown('<div class="stat-card"><div class="number" style="color:#b7950b;">' + str(n_oth) + '</div><div class="label">غير متقدمة 🕐</div></div>', unsafe_allow_html=True)
+                        st.markdown('<div class="stat-card"><div class="number" style="color:#b7950b;">' + str(n_shurty) + '</div><div class="label">شرطي (أصفر) 🟨</div></div>', unsafe_allow_html=True)
                     with cols3[3]:
+                        st.markdown('<div class="stat-card"><div class="number" style="color:#b7950b;">' + str(n_oth) + '</div><div class="label">غير متقدمة 🕐</div></div>', unsafe_allow_html=True)
+                    with cols3[4]:
                         st.markdown('<div class="stat-card"><div class="number" style="color:#1a5276;">' + str(n_ear) + '</div><div class="label">اختبار مبكر 🎓</div></div>', unsafe_allow_html=True)
 
                     fname_out = output_name if output_name.endswith(".xlsx") else output_name + ".xlsx"
