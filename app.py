@@ -2109,8 +2109,14 @@ def process_stage2_file(file_bytes, days_list, statuses_list, periods_list, peri
             has_exam_fields = (
                 not is_blank(day) or has_time or not is_blank(period)
             )
-            if status == "لم تنه المقرر" and has_exam_fields:
-                # نمط شائع: لم تنه المقرر + موعد اختبار → شرطي تلقائياً + تمييز أصفر
+            # يوم + فترة بدون توقيت → شرطي (موعد جزئي يُحسب كشرطي)
+            has_day_period_no_time = (
+                not is_blank(day) and not is_blank(period) and not has_time
+            )
+            if has_day_period_no_time or (
+                status == "لم تنه المقرر" and has_exam_fields
+            ):
+                # نمط شائع: لم تنه المقرر + موعد، أو يوم+فترة بلا توقيت → شرطي + أصفر
                 if KEYWORD_RED not in note:
                     note = f"{note} {KEYWORD_RED}".strip() if note else KEYWORD_RED
                     notes_col = col_map["notes"] or "الملاحظات"
@@ -2577,16 +2583,20 @@ def build_stage3_file(files_dict, days_list, existing_bytes=None):
     combined = combined[combined["الاسم"].map(_stage3_cell_filled)].reset_index(drop=True)
 
     # ── تقسيم الأوراق — صُنّف من القيم الخام (floats/datetime/نصوص) ───────────
-    # اختبار مبكر → (يوم+موعد أو شرطي أو أنهت المقرر) → المتقدمات / وإلا غير متقدمات
+    # اختبار مبكر → (يوم+وقت أو يوم+فترة أو شرطي أو أنهت المقرر) → المتقدمات
     mask_early = combined["الملاحظات"].map(
         lambda v: bool(_stage3_cell_filled(v) and "قدمت الاختبار" in str(v))
     )
     mask_shurty = (~mask_early) & combined.apply(
         lambda r: _stage3_has_shurty(r["الملاحظات"], r["الحالة"]), axis=1
     )
+    # موعد اختبار: (يوم + توقيت) أو (يوم + فترة) — الفترة تغني عن التوقيت الفارغ
     mask_has_slot = (~mask_early) & combined.apply(
         lambda r: _stage3_cell_filled(r["يوم الاختبار"])
-        and _stage3_cell_filled(r["توقيت الاختبار"]),
+        and (
+            _stage3_cell_filled(r["توقيت الاختبار"])
+            or _stage3_cell_filled(r["الفترة"])
+        ),
         axis=1,
     )
     mask_finished_course = combined["الحالة"].map(
