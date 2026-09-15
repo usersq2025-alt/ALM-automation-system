@@ -2397,6 +2397,14 @@ if uploaded_stage2:
 
 DAYS_ORDER = ["الإثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت", "الأحد"]
 
+STAGE3_COLS = [
+    "الرقم", "الاسم", "رقم الواتس اب", "المجموعة", "البلد",
+    "المواليد", "الإجازة", "المعلمة", "الحالة",
+    "يوم الاختبار", "توقيت الاختبار", "الفترة", "الملاحظات",
+]
+STAGE3_SHEET_NAMES = {"المتقدمات للاختبار", "غير متقدمات", "اختبار مبكر"}
+
+
 def day_sort_key(day_val, days_list):
     day_str = str(day_val).strip()
     for i, d in enumerate(days_list):
@@ -2408,16 +2416,127 @@ def day_sort_key(day_val, days_list):
     return 999
 
 
+def _normalize_header(name):
+    """Strip BOM / bidi / zero-width chars that break exact column matching."""
+    s = str(name or "")
+    for ch in ("\ufeff", "\u200e", "\u200f", "\u200b", "\u200c", "\u200d", "\xa0"):
+        s = s.replace(ch, "")
+    return s.strip()
+
+
+def _stage3_cell_filled(val):
+    """
+    True when day/time (or any cell) has a real value.
+    Handles Excel time serials (float 0–1), datetime/time, and strings like '9:15'.
+    """
+    if val is None:
+        return False
+    try:
+        if pd.isna(val):
+            return False
+    except (TypeError, ValueError):
+        pass
+    if isinstance(val, bool):
+        return True
+    if isinstance(val, (datetime.datetime, datetime.date, datetime.time)):
+        return True
+    if isinstance(val, (int, float)):
+        # Excel time serials are typically 0 < x < 1; whole numbers also count as filled
+        return True
+    s = str(val).strip().replace("\xa0", "").replace("\u200f", "").replace("\u200e", "")
+    if not s:
+        return False
+    if s.lower() in ("nan", "none", "nat", "<na>", "natype"):
+        return False
+    return True
+
+
+def _stage3_has_shurty(notes_val, status_val=""):
+    note = str(notes_val or "")
+    st = str(status_val or "")
+    if note.lower() in ("nan", "none", "nat"):
+        note = ""
+    if st.lower() in ("nan", "none", "nat"):
+        st = ""
+    return (KEYWORD_RED in note) or (KEYWORD_RED in st)
+
+
+def _remap_stage3_columns(df):
+    """Map real Excel headers (possibly noisy) onto canonical Stage 3 names."""
+    df = df.copy()
+    df.columns = [_normalize_header(c) for c in df.columns]
+
+    # Prefer exact matches; otherwise first substring hit (same idea as Stage 2 col_map)
+    needles = {
+        "الرقم": ["الرقم"],
+        "الاسم": ["الاسم"],
+        "رقم الواتس اب": ["رقم الواتس", "واتس"],
+        "المجموعة": ["المجموعة"],
+        "البلد": ["البلد"],
+        "المواليد": ["المواليد"],
+        "الإجازة": ["الإجازة", "الاجازة"],
+        "المعلمة": ["المعلمة"],
+        "الحالة": ["الحالة"],
+        "يوم الاختبار": ["يوم الاختبار"],
+        "توقيت الاختبار": ["توقيت الاختبار"],
+        "الفترة": ["الفترة"],
+        "الملاحظات": ["الملاحظات"],
+    }
+    rename = {}
+    used_src = set()
+    for canon, keys in needles.items():
+        if canon in df.columns and canon not in used_src:
+            used_src.add(canon)
+            continue
+        for c in df.columns:
+            if c in used_src:
+                continue
+            cs = str(c)
+            if any(k in cs for k in keys):
+                rename[c] = canon
+                used_src.add(c)
+                break
+    if rename:
+        df = df.rename(columns=rename)
+    if df.columns.duplicated().any():
+        df = df.loc[:, ~df.columns.duplicated()]
+    return df
+
+
+def _list_xlsx_sheet_names(file_bytes):
+    with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
+        sheets_el = ET.parse(zf.open("xl/workbook.xml")).getroot().find("{" + NS + "}sheets")
+        return [sh.attrib.get("name", "") for sh in sheets_el]
+
+
+def _frames_from_stage3_upload(file_bytes):
+    """
+    Teacher files: first sheet.
+    Prior committees workbook (3 known sheets): read ALL sheets so rows on
+    غير متقدمات are not dropped when the file is re-uploaded.
+    """
+    names = _list_xlsx_sheet_names(file_bytes)
+    if any(n in STAGE3_SHEET_NAMES for n in names):
+        frames = []
+        for _name, df in read_existing_stage3(file_bytes).items():
+            if df is None or df.empty:
+                continue
+            frames.append(_remap_stage3_columns(df))
+        return frames
+    return [_remap_stage3_columns(read_xlsx_raw(file_bytes))]
+
+
 def build_stage3_file(files_dict, days_list, existing_bytes=None):
     all_rows = []
     for fname, fb in files_dict.items():
         try:
-            df = read_xlsx_raw(fb)
-            df.columns = [str(c).strip() for c in df.columns]
-            df = df.dropna(how="all")
-            if "الاسم" in df.columns:
-                df = df[df["الاسم"].astype(str).str.strip().replace("nan", "") != ""]
-            all_rows.append(df)
+            for df in _frames_from_stage3_upload(fb):
+                df = df.dropna(how="all")
+                if "الاسم" in df.columns:
+                    name_ok = df["الاسم"].map(_stage3_cell_filled)
+                    df = df[name_ok]
+                if not df.empty:
+                    all_rows.append(df)
         except Exception:
             pass
 
@@ -2432,74 +2551,99 @@ def build_stage3_file(files_dict, days_list, existing_bytes=None):
             existing_sheets = read_existing_stage3(existing_bytes)
             existing_rows = []
             for sheet_name, df_ex in existing_sheets.items():
-                if df_ex.empty: continue
-                df_ex.columns = [str(c).strip() for c in df_ex.columns]
+                if df_ex.empty:
+                    continue
+                df_ex = _remap_stage3_columns(df_ex)
                 df_ex = df_ex.dropna(how="all")
                 if "الاسم" in df_ex.columns:
-                    df_ex = df_ex[df_ex["الاسم"].astype(str).str.strip().replace("nan","") != ""]
+                    df_ex = df_ex[df_ex["الاسم"].map(_stage3_cell_filled)]
                 if not df_ex.empty:
                     existing_rows.append(df_ex)
             if existing_rows:
-                combined = pd.concat([pd.concat(existing_rows, ignore_index=True), combined],
-                                     ignore_index=True)
+                combined = pd.concat(
+                    [pd.concat(existing_rows, ignore_index=True), combined],
+                    ignore_index=True,
+                )
         except Exception as ex:
             pass  # إذا فشلت القراءة نكمل بالملفات الجديدة فقط
 
-    cols = [
-        "الرقم", "الاسم", "رقم الواتس اب", "المجموعة", "البلد",
-        "المواليد", "الإجازة", "المعلمة", "الحالة",
-        "يوم الاختبار", "توقيت الاختبار", "الفترة", "الملاحظات",
-    ]
+    cols = list(STAGE3_COLS)
     for c in cols:
         if c not in combined.columns:
             combined[c] = ""
     combined = combined[cols].copy()
 
-    # تنظيف شامل — يزيل المسافات الخفية وكل أشكال الفراغ
-    for c in cols:
-        combined[c] = (combined[c]
-                       .fillna("")
-                       .astype(str)
-                       .str.strip()
-                       .str.replace("\u00a0", "", regex=False)
-                       .replace("nan", ""))
+    # Drop empty names using raw cells (before string coercion)
+    combined = combined[combined["الاسم"].map(_stage3_cell_filled)].reset_index(drop=True)
 
-    # حذف صفوف اسمها فارغ
-    combined = combined[combined["الاسم"] != ""].reset_index(drop=True)
-
-    # ── تقسيم الأوراق ────────────────────────────────────────────────────────
-    # الترتيب: اختبار مبكر → (يوم+موعد أو شرطي أو أنهت المقرر) → المتقدمات
-    #           وإلا → غير متقدمات
-    def _cell_filled(val):
-        s = str(val or "").strip()
-        return bool(s) and s.lower() not in ("nan", "none", "nat", "<na>")
-
-    def _has_shurty(notes_val, status_val=""):
-        note = str(notes_val or "")
-        st   = str(status_val or "")
-        return (KEYWORD_RED in note) or (KEYWORD_RED in st)
-
-    mask_early = combined["الملاحظات"].astype(str).str.contains(
-        "قدمت الاختبار", na=False
+    # ── تقسيم الأوراق — صُنّف من القيم الخام (floats/datetime/نصوص) ───────────
+    # اختبار مبكر → (يوم+موعد أو شرطي أو أنهت المقرر) → المتقدمات / وإلا غير متقدمات
+    mask_early = combined["الملاحظات"].map(
+        lambda v: bool(_stage3_cell_filled(v) and "قدمت الاختبار" in str(v))
     )
     mask_shurty = (~mask_early) & combined.apply(
-        lambda r: _has_shurty(r["الملاحظات"], r["الحالة"]), axis=1
+        lambda r: _stage3_has_shurty(r["الملاحظات"], r["الحالة"]), axis=1
     )
-    # موعد مكتمل: يوم الاختبار + توقيت الاختبار معاً → متقدمة بغض النظر عن «لم تنه المقرر»
     mask_has_slot = (~mask_early) & combined.apply(
-        lambda r: _cell_filled(r["يوم الاختبار"]) and _cell_filled(r["توقيت الاختبار"]),
+        lambda r: _stage3_cell_filled(r["يوم الاختبار"])
+        and _stage3_cell_filled(r["توقيت الاختبار"]),
         axis=1,
     )
-    mask_finished_course = combined["الحالة"].astype(str).str.strip() == "أنهت المقرر"
+    mask_finished_course = combined["الحالة"].map(
+        lambda v: str(v or "").strip() == "أنهت المقرر"
+    )
     mask_applicants = (~mask_early) & (
         mask_finished_course | mask_shurty | mask_has_slot
     )
     mask_others = (~mask_applicants) & (~mask_early)
 
+    def _clean_cell(v):
+        if not _stage3_cell_filled(v):
+            return ""
+        return v
+
+    def _fmt_time_cell(v):
+        if not _stage3_cell_filled(v):
+            return ""
+        if isinstance(v, datetime.time):
+            return f"{v.hour}:{v.minute:02d}"
+        if isinstance(v, datetime.datetime):
+            return f"{v.hour}:{v.minute:02d}"
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            fval = float(v)
+            if 0 <= fval < 1:
+                total = int(round(fval * 24 * 60))
+                return f"{total // 60}:{total % 60:02d}"
+        s = str(v).strip().replace("\xa0", "")
+        try:
+            fval = float(s)
+            if 0 <= fval < 1:
+                total = int(round(fval * 24 * 60))
+                return f"{total // 60}:{total % 60:02d}"
+        except Exception:
+            pass
+        return s
+
+    # تنظيف العرض بعد التصنيف (لا يؤثر على قرار الأوراق)
+    for c in cols:
+        if c == "توقيت الاختبار":
+            combined[c] = combined[c].map(_fmt_time_cell)
+        else:
+            combined[c] = (
+                combined[c]
+                .map(_clean_cell)
+                .astype(str)
+                .str.strip()
+                .str.replace("\u00a0", "", regex=False)
+                .str.replace("\u200f", "", regex=False)
+                .str.replace("\u200e", "", regex=False)
+                .replace({"nan": "", "None": "", "NaT": ""})
+            )
+
     df_finished = combined[mask_applicants].copy()
     df_others   = combined[mask_others].copy()
     df_early    = combined[mask_early].copy()
-    # أصفر على الحالة: شرطي صراحة، أو موعد مع حالة ليست «أنهت المقرر» (تمييز شرطي)
+    # أصفر على الحالة: شرطي صراحة، أو موعد مع حالة ليست «أنهت المقرر»
     df_finished["_is_shurty"] = (
         mask_shurty.loc[df_finished.index]
         | (
@@ -2507,14 +2651,32 @@ def build_stage3_file(files_dict, days_list, existing_bytes=None):
             & ~mask_finished_course.loc[df_finished.index]
         )
     ).values
-    # إحصاء الشرطي للعرض = كل من يُبرز بالأصفر في المتقدمات
     mask_shurty_highlight = mask_shurty | (
         mask_has_slot & ~mask_finished_course & ~mask_early
     )
 
     # ── الترتيب ──────────────────────────────────────────────────────────────
+    def _time_sort_key(v):
+        s = str(v or "").strip()
+        if not s:
+            return 9999
+        try:
+            fval = float(s)
+            if 0 <= fval < 1:
+                return fval * 24 * 60
+            return fval
+        except Exception:
+            pass
+        if ":" in s:
+            try:
+                parts = s.split(":")
+                return int(parts[0]) * 60 + int(float(parts[1]))
+            except Exception:
+                return 9999
+        return 9999
+
     df_finished["_day"]  = df_finished["يوم الاختبار"].apply(lambda x: day_sort_key(x, days_list))
-    df_finished["_time"] = pd.to_numeric(df_finished["توقيت الاختبار"], errors="coerce").fillna(999)
+    df_finished["_time"] = df_finished["توقيت الاختبار"].map(_time_sort_key)
     df_finished = (
         df_finished
         .sort_values(["المعلمة", "_day", "_time"])
